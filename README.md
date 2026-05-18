@@ -43,7 +43,7 @@ docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine go run database/dbtool
 ### 3. Launch the Web Application
 Launch the complete container orchestration (application and persistent volumes) in detached background mode:
 ```bash
-docker-compose up --build -d
+docker compose up --build -d
 ```
 Visit **`http://localhost:8080`** in your web browser to access the live web application!
 
