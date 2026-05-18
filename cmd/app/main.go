@@ -18,7 +18,7 @@ func main() {
 
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "govemvc.db"
+		dbPath = "database/govemvc.db"
 	}
 
 	log.Printf("initializing database at %s...", dbPath)
