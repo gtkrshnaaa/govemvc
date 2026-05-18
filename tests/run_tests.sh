@@ -22,10 +22,10 @@ go test -v -coverpkg=govemvc/models,govemvc/controllers,govemvc/websocket "$ROOT
 
 # Validate test outputs
 if grep -q "FAIL" "$SCRIPT_DIR/results/test_report.log"; then
-    echo "❌ Some tests failed! Review details in: tests/results/test_report.log"
+    echo "Some tests failed! Review details in: tests/results/test_report.log"
     exit 1
 else
-    echo "✅ All tests passed successfully!"
+    echo "All tests passed successfully!"
 fi
 
 echo "Generating HTML coverage report..."
