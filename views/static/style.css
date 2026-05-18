@@ -1,14 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 
 :root {
-    --bg-dark: #0a0e17;
-    --bg-card: rgba(18, 26, 44, 0.65);
-    --bg-input: #151e33;
-    --primary-grad: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
-    --danger-grad: linear-gradient(135deg, #ff0844 0%, #ffb199 100%);
-    --text-main: #f3f4f6;
-    --text-muted: #9ca3af;
-    --accent: #00f2fe;
+    --bg-dark: #09090b;
+    --bg-card: rgba(20, 20, 23, 0.65);
+    --bg-input: #18181b;
+    --primary-grad: linear-gradient(135deg, #ffffff 0%, #a1a1aa 100%);
+    --danger-grad: linear-gradient(135deg, #27272a 0%, #52525b 100%);
+    --text-main: #fafafa;
+    --text-muted: #71717a;
+    --accent: #ffffff;
     --border-color: rgba(255, 255, 255, 0.08);
 }
 
@@ -22,8 +22,8 @@ body {
     font-family: 'Outfit', sans-serif;
     background-color: var(--bg-dark);
     background-image: 
-        radial-gradient(at 10% 20%, rgba(0, 242, 254, 0.06) 0px, transparent 50%),
-        radial-gradient(at 90% 80%, rgba(79, 172, 254, 0.06) 0px, transparent 50%);
+        radial-gradient(at 10% 20%, rgba(255, 255, 255, 0.02) 0px, transparent 50%),
+        radial-gradient(at 90% 80%, rgba(255, 255, 255, 0.02) 0px, transparent 50%);
     color: var(--text-main);
     min-height: 100vh;
     display: flex;
@@ -83,14 +83,14 @@ body {
 }
 
 .status-dot.connected {
-    background-color: #10b981;
-    box-shadow: 0 0 8px #10b981;
+    background-color: #fafafa;
+    box-shadow: 0 0 8px #fafafa;
     animation: pulse 1.8s infinite;
 }
 
 .status-dot.disconnected {
-    background-color: #ef4444;
-    box-shadow: 0 0 8px #ef4444;
+    background-color: #27272a;
+    box-shadow: 0 0 8px #27272a;
 }
 
 .status-text {
@@ -127,7 +127,7 @@ body {
 }
 
 .todo-app-card:hover {
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(0, 242, 254, 0.03);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(255, 255, 255, 0.01);
 }
 
 .card-header {
@@ -168,7 +168,7 @@ body {
 
 .todo-form input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.08);
 }
 
 .btn-primary {
@@ -182,12 +182,12 @@ body {
     font-family: inherit;
     font-size: 0.95rem;
     transition: all 0.2s ease;
-    box-shadow: 0 4px 15px rgba(0, 242, 254, 0.2);
+    box-shadow: 0 4px 15px rgba(255, 255, 255, 0.05);
 }
 
 .btn-primary:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 242, 254, 0.35);
+    box-shadow: 0 6px 20px rgba(255, 255, 255, 0.1);
 }
 
 .btn-primary:active {
@@ -226,7 +226,7 @@ body {
 
 .todo-item:hover {
     background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(0, 242, 254, 0.25);
+    border-color: rgba(255, 255, 255, 0.2);
     transform: translateX(2px);
 }
 
@@ -285,8 +285,8 @@ body {
 
 .btn-delete {
     background: transparent;
-    border: 1px solid rgba(239, 68, 68, 0.2);
-    color: #f87171;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #a1a1aa;
     font-weight: 500;
     padding: 0.4rem 0.8rem;
     border-radius: 8px;
@@ -298,9 +298,9 @@ body {
 
 .btn-delete:hover {
     background: var(--danger-grad);
-    color: #030712;
+    color: #ffffff;
     border-color: transparent;
-    box-shadow: 0 4px 10px rgba(239, 68, 68, 0.15);
+    box-shadow: 0 4px 10px rgba(255, 255, 255, 0.05);
 }
 
 .empty-state {
