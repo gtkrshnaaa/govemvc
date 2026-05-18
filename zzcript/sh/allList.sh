@@ -20,15 +20,12 @@ echo "==========================================================================
 echo "" >> "$OUTPUT_FILE"
 
 find "$ROOT_DIR" -type f \
-	! -path '*/.*' \
+	! -path '*/.git/*' \
 	! -path '*/node_modules/*' \
 	! -path '*/zzcript/*' \
 	! -path '*/tests/results/*' \
 	! -name '*.db' \
 	! -name 'main' \
-	! -name 'Dockerfile' \
-	! -name 'docker-compose.yml' \
-	! -name 'go.sum' \
 	| sort | while read -r filepath; do
 		relative_path="${filepath#$ROOT_DIR/}"
 		echo "Adding: $relative_path"

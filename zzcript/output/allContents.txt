@@ -7,7 +7,7 @@ real-time WebSocket protocols, and isolated unit/integration testing suites.
 
 Utilize this consolidated text to review the entire application architecture, perform
 full-system audits, or transport code cleanly across sandboxed development hosts.
-Generated on: Tue May 19 05:04:23 AM WITA 2026
+Generated on: Tue May 19 05:05:48 AM WITA 2026
 ================================================================================
 
 ================================================================================
@@ -348,11 +348,90 @@ func SeedTodos() error {
 
 ================================================================================
 ================================================================================
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_PATH=/app/data/govemvc.db
+    volumes:
+      - app-data:/app/data
+    restart: always
+
+volumes:
+  app-data:
+
+
+================================================================================
+================================================================================
+# Stage 1: Build
+FROM golang:1.22-alpine AS builder
+
+# Install build dependencies for CGO (SQLite requires gcc)
+RUN apk add --no-cache gcc musl-dev
+
+WORKDIR /app
+
+# Copy dependency files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Compile binary into a single, self-contained file
+RUN CGO_ENABLED=1 go build -ldflags="-w -s" -o main cmd/app/main.go
+
+# Stage 2: Final
+FROM alpine:3.19
+
+WORKDIR /app
+
+# Copy the compiled binary and necessary static/view files from builder
+COPY --from=builder /app/main .
+COPY --from=builder /app/views ./views
+
+EXPOSE 8080
+
+CMD ["./main"]
+
+
+================================================================================
+================================================================================
+PORT=8080
+DB_PATH=database/govemvc.db
+
+
+================================================================================
+================================================================================
+PORT=8080
+DB_PATH=database/govemvc.db
+
+
+================================================================================
+================================================================================
+.env
+*.db
+**/*.db
+
+
+================================================================================
+================================================================================
 module govemvc
 
 go 1.22.2
 
 require github.com/mattn/go-sqlite3 v1.14.44 // indirect
+
+
+================================================================================
+================================================================================
+github.com/mattn/go-sqlite3 v1.14.44 h1:3VSe+xafpbzsLbdr2AWlAZk9yRHiBhTBakioXaCKTF8=
+github.com/mattn/go-sqlite3 v1.14.44/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
 
 
 ================================================================================
