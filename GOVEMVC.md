@@ -109,7 +109,7 @@ Every application adhering to the GOVEMVC convention must implement the semantic
 * **Large-Scale Implementation:**
   * **Incremental SQL Migrations:** All schema changes must be saved as versioned, raw SQL scripts separated into UP (creating/altering tables) and DOWN (reverting changes) statements under `/database/migrations`.
   * **Go Native Seeders:** System mock data or initial application datasets must be populated using native Go seeder scripts nested under `/database/seeders`.
-  * **Unified CLI DB Tool:** A lightweight DB Command Line Tool (`dbtool`) must be built under `/cmd` to parse server commands and easily run migrations, seeders, or database resets during production deployments.
+  * **Unified CLI DB Tool:** A lightweight DB Command Line Tool (`dbtool`) must be built under the `/database` directory (e.g., `/database/dbtool/main.go`) to parse server commands and easily run migrations, seeders, or database resets during production deployments.
 
 ### G. Automated Testing Pipeline (Unit, Integration & Reports)
 
