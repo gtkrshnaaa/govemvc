@@ -117,8 +117,8 @@ Every application adhering to the GOVEMVC convention must implement the semantic
 * **Large-Scale Implementation:**
   * **Unit Tests:** Organized under `/tests/unit`, verifying isolated models, structural algorithms, and data logic using sterile, extremely fast in-memory databases (e.g., SQLite `:memory:`).
   * **Integration Tests:** Organized under `/tests/integration`, verifying HTTP endpoints, routing configurations, logger pipelines, security headers, and SSR page parsing using Go's native `net/http/httptest`.
-  * **Results Aggregation:** All output verbose test logs, binary profiles, and HTML visual reports must be compiled under `/tests/results/` (e.g., `test-report.log`, `coverage.out`, `coverage.html`).
-  * **Automated Runner Script:** A shell script `run_tests.sh` must be configured at the tests root to wipe old data, execute Go tests with accurate `-coverpkg` references, and auto-generate premium interactive HTML visual coverage maps.
+  * **Results Aggregation:** All output verbose test logs, binary profiles, and HTML visual reports must be compiled under `/tests/results/` (e.g., `testReport.log`, `coverage.out`, `coverage.html`).
+  * **Automated Runner Script:** A shell script `runTests.sh` must be configured at the tests root to wipe old data, execute Go tests with accurate `-coverpkg` references, and auto-generate premium interactive HTML visual coverage maps.
 
 ---
 

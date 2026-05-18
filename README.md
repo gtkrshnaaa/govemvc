@@ -30,20 +30,20 @@ Below is the directory hierarchy implemented in this reference Todo application:
 │   ├── /dbtool
 │   │   └── main.go           # CLI database tool (migrate, seed, rollback, reset)
 │   ├── /migrations           # Versioned incremental raw SQL schema alterations
-│   │   ├── 0001-create-todos-table.down.sql   # Rollback database schema script
-│   │   └── 0001-create-todos-table.up.sql     # Create database schema script (Official Schema)
+│   │   ├── 0001CreateTodosTable.down.sql   # Rollback database schema script
+│   │   └── 0001CreateTodosTable.up.sql     # Create database schema script (Official Schema)
 │   └── /seeders              # Native Go scripts for populating default records
-│       └── todoseeder.go
+│       └── todoSeeder.go
 ├── /tests                    # Structured automated testing pipeline
 │   ├── /unit
-│   │   └── todomodel_test.go         # Model logic & SQL query operations unit tests
+│   │   └── todoModel_test.go         # Model logic & SQL query operations unit tests
 │   ├── /integration
-│   │   └── todocontroller_test.go    # HTTP Handlers, Routing, & SSR rendering integration tests
+│   │   └── todoController_test.go    # HTTP Handlers, Routing, & SSR rendering integration tests
 │   ├── /results                       # Center of compiled test artifacts (Git tracked)
 │   │   ├── coverage.html              # Interactive HTML code coverage visual map
 │   │   ├── coverage.out               # Go test coverage profile
-│   │   └── test-report.log            # Verbose test runner terminal execution logs
-│   └── run_tests.sh                   # Automator script executing tests and compiling reports
+│   │   └── testReport.log            # Verbose test runner terminal execution logs
+│   └── runTests.sh                   # Automator script executing tests and compiling reports
 ├── /middleware               # Global HTTP pipeline interceptors (Logging, Security protection headers)
 │   └── middleware.go
 ├── /models                   # Data definitions, structures, and raw SQL queries
@@ -129,12 +129,12 @@ All tests run in completely isolated environments using offical SQLite in-memory
 ### Execute Automated Tests
 To run all unit and integration test suites, and immediately generate visual report maps, run the central script:
 ```bash
-bash tests/run_tests.sh
+bash tests/runTests.sh
 ```
 
 ### Read Generated Reports
 After the runner completes, review the gathered artifacts under `tests/results/`:
-* **`tests/results/test-report.log`**: Plaintext terminal output detailing successful assertion results.
+* **`tests/results/testReport.log`**: Plaintext terminal output detailing successful assertion results.
 * **`tests/results/coverage.html`**: Open this file in any web browser to view an interactive visual map highlighting exact code lines evaluated during test coverage!
 
 ---
