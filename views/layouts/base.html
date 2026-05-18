@@ -1,0 +1,34 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GOVEMVC Todo Manager</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="container header-container">
+            <h1 class="logo">GOVEMVC ⚡</h1>
+            <div class="status-indicator">
+                <span class="status-dot disconnected" id="wsStatusDot"></span>
+                <span class="status-text" id="wsStatusText">Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main container">
+        {{template "content" .}}
+    </main>
+
+    <footer class="app-footer">
+        <div class="container">
+            <p>Built with Golang Standard Library & SQLite</p>
+        </div>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}
