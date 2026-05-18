@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"log"
 	"os"
 	"testing"
 
@@ -8,6 +9,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Change working directory to project root so templates in views/ can be resolved
+	if err := os.Chdir(".."); err != nil {
+		log.Fatalf("failed to change directory to project root: %v", err)
+	}
+
 	testDBPath := "test_govemvc.db"
 	models.InitDB(testDBPath)
 
