@@ -1,6 +1,6 @@
 # GOVEMVC: Reference Implementation (Todo Application)
 
-Welcome to the official reference implementation of the **GOVEMVC** (Go Vendor & Standard MVC) architectural convention. This project showcases a fully functional, production-ready real-time Todo application built entirely on top of Golang's built-in **Standard Library** and official vendor drivers—achieving high performance, extreme stability, and **zero dependency on external cosmetic frameworks**.
+Welcome to the official reference implementation of the **GOVEMVC** (Go Vendor & Standard MVC) architectural convention. This project showcases a fully functional, production-ready real-time Todo application built entirely on top of Golang's built-in **Standard Library** and official vendor drivers—achieving high performance, extreme stability, and **relying purely on standard and vendor-official packages for a lightweight, zero-dependency footprint**.
 
 ---
 
