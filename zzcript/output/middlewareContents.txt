@@ -1,0 +1,55 @@
+================================================================================
+GOVEMVC MIDDLEWARE EXPORT DUMP (/middleware)
+
+This document contains a consolidated dump of all global HTTP middleware components,
+focusing on security headers, request instrumentation/logging, and active crash recovery
+pipelines.
+Generated on: Tue May 19 05:04:23 AM WITA 2026
+================================================================================
+
+================================================================================
+================================================================================
+package middleware
+
+import (
+	"log"
+	"net/http"
+	"time"
+)
+
+// Middleware defines a function that wraps an http.Handler.
+type Middleware func(http.Handler) http.Handler
+
+// Chain aggregates multiple middlewares into a single sequential execution pipeline.
+func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
+}
+
+// Logger intercepts request metadata and logs the execution duration.
+func Logger() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			next.ServeHTTP(w, r)
+			log.Printf("%s %s %s %s", r.Method, r.RequestURI, r.RemoteAddr, time.Since(start))
+		})
+	}
+}
+
+// SecurityHeaders injects standard defensive browser protection headers.
+func SecurityHeaders() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:;")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+

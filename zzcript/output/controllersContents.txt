@@ -1,14 +1,10 @@
 ================================================================================
-GOVEMVC TARGETED MODULE EXPORT: /controllers
+GOVEMVC CONTROLLERS EXPORT DUMP (/controllers)
 
-This document contains a consolidated dump of all source code files under the /controllers
-directory of the GOVEMVC project.
-
-Module Focus: HTTP Handlers (Controllers): Manages application logic, request/response cycles, and coordinate templates
-
-Utilize this targeted text dump to review the specific layer's implementation, perform modular
-audits, or troubleshoot business-logic flows in isolation.
-Generated on: Tue May 19 04:57:26 AM WITA 2026
+This document contains a consolidated dump of all HTTP request controllers. These handlers
+process user actions, interact with database models, format JSON outputs, and render
+responsive server-side HTML template views.
+Generated on: Tue May 19 05:04:23 AM WITA 2026
 ================================================================================
 
 ================================================================================

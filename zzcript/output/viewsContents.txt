@@ -1,0 +1,565 @@
+================================================================================
+GOVEMVC VIEWS EXPORT DUMP (/views)
+
+This document contains a consolidated dump of all frontend UI assets, including HTML5
+templates, CSS stylesheets with premium glassmorphic/micro-animation rules, and vanilla
+Javascript WebSocket connection clients.
+Generated on: Tue May 19 05:04:23 AM WITA 2026
+================================================================================
+
+================================================================================
+================================================================================
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GOVEMVC Todo Manager</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="container header-container">
+            <h1 class="logo">GOVEMVC ⚡</h1>
+            <div class="status-indicator">
+                <span class="status-dot disconnected" id="wsStatusDot"></span>
+                <span class="status-text" id="wsStatusText">Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main container">
+        {{template "content" .}}
+    </main>
+
+    <footer class="app-footer">
+        <div class="container">
+            <p>Built with Golang Standard Library & SQLite</p>
+        </div>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}
+
+
+================================================================================
+================================================================================
+{{define "content"}}
+<div class="todo-app-card">
+    <div class="card-header">
+        <h2>Todo List</h2>
+        <p>A reactive task manager powered by native WebSockets</p>
+    </div>
+
+    <form action="/todos" method="POST" class="todo-form" id="todoForm">
+        <input type="text" name="title" id="todoTitle" placeholder="What needs to be done?" required autofocus autocomplete="off">
+        <button type="submit" class="btn-primary">Add Task</button>
+    </form>
+
+    <div class="todo-list-wrapper">
+        <ul class="todo-list" id="todoList">
+            {{range .Todos}}
+            <li class="todo-item {{if .Completed}}completed{{end}}" data-id="{{.ID}}" id="todo-{{.ID}}">
+                <label class="todo-label">
+                    <input type="checkbox" class="todo-checkbox" {{if .Completed}}checked{{end}} onchange="toggleTodo({{.ID}}, this.checked)">
+                    <span class="todo-text">{{.Title}}</span>
+                </label>
+                <button class="btn-delete" onclick="deleteTodo({{.ID}})">Delete</button>
+            </li>
+            {{else}}
+            <li class="empty-state" id="emptyState">No tasks yet. Create one above!</li>
+            {{end}}
+        </ul>
+    </div>
+</div>
+{{end}}
+
+
+================================================================================
+================================================================================
+let ws;
+const wsStatusDot = document.getElementById("wsStatusDot");
+const wsStatusText = document.getElementById("wsStatusText");
+const todoList = document.getElementById("todoList");
+const todoForm = document.getElementById("todoForm");
+const todoTitle = document.getElementById("todoTitle");
+
+// Connect to the native WebSocket server
+function connectWS() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        wsStatusDot.className = "status-dot connected";
+        wsStatusText.textContent = "Live Connected";
+    };
+
+    ws.onclose = () => {
+        wsStatusDot.className = "status-dot disconnected";
+        wsStatusText.textContent = "Disconnected (Reconnecting...)";
+        setTimeout(connectWS, 2000);
+    };
+
+    ws.onerror = (err) => {
+        console.error("websocket error:", err);
+        ws.close();
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWSMessage(data);
+    };
+}
+
+// Handle real-time updates from WebSocket broadcast
+function handleWSMessage(data) {
+    if (data.event === "create") {
+        removeEmptyState();
+        if (!document.getElementById(`todo-${data.todo.id}`)) {
+            const li = createTodoDOM(data.todo);
+            todoList.insertAdjacentHTML("afterbegin", li);
+        }
+    } else if (data.event === "toggle") {
+        const item = document.getElementById(`todo-${data.todo.id}`);
+        if (item) {
+            const checkbox = item.querySelector(".todo-checkbox");
+            checkbox.checked = data.todo.completed;
+            if (data.todo.completed) {
+                item.classList.add("completed");
+            } else {
+                item.classList.remove("completed");
+            }
+        }
+    } else if (data.event === "delete") {
+        const item = document.getElementById(`todo-${data.todo.id}`);
+        if (item) {
+            item.classList.add("deleting");
+            item.remove();
+            checkEmptyState();
+        }
+    }
+}
+
+// Generate Todo item HTML
+function createTodoDOM(todo) {
+    return `
+        <li class="todo-item ${todo.completed ? 'completed' : ''}" data-id="${todo.id}" id="todo-${todo.id}">
+            <label class="todo-label">
+                <input type="checkbox" class="todo-checkbox" ${todo.completed ? 'checked' : ''} onchange="toggleTodo(${todo.id}, this.checked)">
+                <span class="todo-text">${escapeHTML(todo.title)}</span>
+            </label>
+            <button class="btn-delete" onclick="deleteTodo(${todo.id})">Delete</button>
+        </li>
+    `;
+}
+
+// Helper to escape HTML tags to prevent client-side XSS
+function escapeHTML(str) {
+    return str.replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+    );
+}
+
+function removeEmptyState() {
+    const empty = document.getElementById("emptyState");
+    if (empty) {
+        empty.remove();
+    }
+}
+
+function checkEmptyState() {
+    if (todoList.children.length === 0) {
+        todoList.innerHTML = `<li class="empty-state" id="emptyState">No tasks yet. Create one above!</li>`;
+    }
+}
+
+// Asynchronously toggle todo status via API
+async function toggleTodo(id, completed) {
+    try {
+        const response = await fetch(`/todos/${id}/toggle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ completed })
+        });
+        if (!response.ok) {
+            console.error("failed to toggle todo status");
+        }
+    } catch (err) {
+        console.error("network error toggling status:", err);
+    }
+}
+
+// Asynchronously delete todo via API
+async function deleteTodo(id) {
+    try {
+        const response = await fetch(`/todos/${id}`, {
+            method: "DELETE"
+        });
+        if (!response.ok) {
+            console.error("failed to delete todo");
+        }
+    } catch (err) {
+        console.error("network error deleting todo:", err);
+    }
+}
+
+// Intercept form submission to add new task asynchronously
+if (todoForm) {
+    todoForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const title = todoTitle.value.trim();
+        if (!title) return;
+
+        try {
+            const formData = new FormData();
+            formData.append("title", title);
+
+            const response = await fetch("/todos", {
+                method: "POST",
+                body: formData
+            });
+
+            if (response.ok) {
+                todoTitle.value = "";
+                todoTitle.focus();
+            } else {
+                console.error("failed to create todo");
+            }
+        } catch (err) {
+            console.error("network error creating todo:", err);
+        }
+    };
+}
+
+// Initialize connection
+connectWS();
+
+
+================================================================================
+================================================================================
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+    --bg-dark: #09090b;
+    --bg-card: rgba(20, 20, 23, 0.65);
+    --bg-input: #18181b;
+    --primary-grad: linear-gradient(135deg, #ffffff 0%, #a1a1aa 100%);
+    --danger-grad: linear-gradient(135deg, #27272a 0%, #52525b 100%);
+    --text-main: #fafafa;
+    --text-muted: #71717a;
+    --accent: #ffffff;
+    --border-color: rgba(255, 255, 255, 0.08);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background-color: var(--bg-dark);
+    background-image: 
+        radial-gradient(at 10% 20%, rgba(255, 255, 255, 0.02) 0px, transparent 50%),
+        radial-gradient(at 90% 80%, rgba(255, 255, 255, 0.02) 0px, transparent 50%);
+    color: var(--text-main);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+}
+
+.container {
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+}
+
+/* Header */
+.app-header {
+    background-color: rgba(10, 14, 23, 0.8);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    padding: 1rem 0;
+}
+
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-size: 1.5rem;
+    font-weight: 700;
+    background: var(--primary-grad);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.5px;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    padding: 0.4rem 0.8rem;
+    border-radius: 50px;
+    border: 1px solid var(--border-color);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    transition: all 0.3s ease;
+}
+
+.status-dot.connected {
+    background-color: #fafafa;
+    box-shadow: 0 0 8px #fafafa;
+    animation: pulse 1.8s infinite;
+}
+
+.status-dot.disconnected {
+    background-color: #27272a;
+    box-shadow: 0 0 8px #27272a;
+}
+
+.status-text {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.3); opacity: 0.6; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Main */
+.app-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1.5rem;
+}
+
+/* Card */
+.todo-app-card {
+    width: 100%;
+    background: var(--bg-card);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    padding: 2.5rem;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.todo-app-card:hover {
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(255, 255, 255, 0.01);
+}
+
+.card-header {
+    margin-bottom: 2rem;
+}
+
+.card-header h2 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    letter-spacing: -0.5px;
+}
+
+.card-header p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+
+/* Form */
+.todo-form {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+}
+
+.todo-form input {
+    flex: 1;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 0.9rem 1.2rem;
+    color: var(--text-main);
+    font-size: 0.95rem;
+    outline: none;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+.todo-form input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.08);
+}
+
+.btn-primary {
+    background: var(--primary-grad);
+    border: none;
+    color: #030712;
+    font-weight: 600;
+    padding: 0.9rem 1.8rem;
+    border-radius: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 15px rgba(255, 255, 255, 0.05);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 255, 255, 0.1);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+/* Todo List */
+.todo-list-wrapper {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.todo-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.todo-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1rem 1.2rem;
+    transition: all 0.2s ease;
+    animation: slideIn 0.3s ease forwards;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.todo-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateX(2px);
+}
+
+.todo-label {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    cursor: pointer;
+    flex: 1;
+}
+
+.todo-checkbox {
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--text-muted);
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+    display: grid;
+    place-content: center;
+    transition: all 0.2s ease;
+}
+
+.todo-checkbox::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    transform: scale(0);
+    transition: 120ms transform ease-in-out;
+    box-shadow: inset 1em 1em #030712;
+    background-color: #030712;
+    clip-path: polygon(14% 44%, 0 58%, 38% 96%, 100% 21%, 86% 7%, 38% 68%);
+}
+
+.todo-checkbox:checked {
+    background: var(--primary-grad);
+    border-color: transparent;
+}
+
+.todo-checkbox:checked::before {
+    transform: scale(1);
+}
+
+.todo-text {
+    font-size: 1rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.todo-item.completed .todo-text {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+.btn-delete {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #a1a1aa;
+    font-weight: 500;
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+}
+
+.btn-delete:hover {
+    background: var(--danger-grad);
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow: 0 4px 10px rgba(255, 255, 255, 0.05);
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 2.5rem 0;
+    font-size: 0.95rem;
+}
+
+/* Footer */
+.app-footer {
+    border-top: 1px solid var(--border-color);
+    padding: 1.5rem 0;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+

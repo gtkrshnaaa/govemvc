@@ -1,0 +1,962 @@
+================================================================================
+GOVEMVC BACKEND CORE EXPORT DUMP (No Frontend/Views Included)
+
+This document contains a consolidated dump of all backend source code files of the GOVEMVC
+project (excluding frontend layout templates, HTML pages, and static UI assets).
+It includes the entrypoint web boot, controllers, database administration, custom middleware,
+model structures, routes mapping, WebSocket hijack hub, and automated tests.
+Generated on: Tue May 19 05:04:23 AM WITA 2026
+================================================================================
+
+================================================================================
+================================================================================
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+
+	"govemvc/models"
+	"govemvc/routes"
+	"govemvc/websocket"
+)
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "database/govemvc.db"
+	}
+
+	log.Printf("initializing database at %s...", dbPath)
+	models.InitDB(dbPath)
+
+	log.Println("starting websocket active hub...")
+	go websocket.ActiveHub.Start()
+
+	router := routes.RegisterRoutes()
+
+	addr := ":" + port
+	log.Printf("server is starting and listening on http://localhost%s", addr)
+	if err := http.ListenAndServe(addr, router); err != nil {
+		log.Fatalf("failed to start server: %v", err)
+	}
+}
+
+
+================================================================================
+================================================================================
+package controllers
+
+import (
+	"encoding/json"
+	"html/template"
+	"net/http"
+	"strconv"
+
+	"govemvc/models"
+	"govemvc/websocket"
+)
+
+// IndexHandler renders the main dashboard page with all todo items.
+func IndexHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	todos, err := models.GetAllTodos()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tmpl, err := template.ParseFiles("views/layouts/base.html", "views/pages/index.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Todos": todos,
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "base", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// CreateTodoHandler processes a POST request to add a new todo.
+func CreateTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	title := r.FormValue("title")
+	if title == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := models.CreateTodo(title)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "create",
+		"todo": map[string]interface{}{
+			"id":        id,
+			"title":     title,
+			"completed": false,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// ToggleTodoHandler toggles a todo's completed status.
+func ToggleTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var reqBody struct {
+		Completed bool `json:"completed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if err := models.ToggleTodo(id, reqBody.Completed); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "toggle",
+		"todo": map[string]interface{}{
+			"id":        id,
+			"completed": reqBody.Completed,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// DeleteTodoHandler deletes a todo item.
+func DeleteTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	if err := models.DeleteTodo(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "delete",
+		"todo": map[string]interface{}{
+			"id": id,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// WebSocketHandler upgrades and establishes the real-time websocket connection.
+func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Upgrade(w, r)
+	if err != nil {
+		http.Error(w, "failed to upgrade: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	client := &websocket.Client{
+		Conn: conn,
+		Send: make(chan []byte, 256),
+	}
+
+	websocket.ActiveHub.Register <- client
+
+	go client.WriteLoop()
+	go client.ReadLoop()
+}
+
+
+================================================================================
+================================================================================
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+
+	"govemvc/database/seeders"
+	"govemvc/models"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+func main() {
+	flag.Parse()
+	args := flag.Args()
+
+	if len(args) < 1 {
+		fmt.Println("Usage: go run database/dbtool/main.go [migrate|seed|reset]")
+		os.Exit(1)
+	}
+
+	command := args[0]
+
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "database/govemvc.db"
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	models.DB = db
+
+	switch command {
+	case "migrate":
+		runMigrations(db)
+	case "seed":
+		runSeeders()
+	case "reset":
+		runReset(db)
+	default:
+		fmt.Printf("unknown command: %s\n", command)
+		os.Exit(1)
+	}
+}
+
+func runMigrations(db *sql.DB) {
+	log.Println("running database migrations...")
+	schema := `
+	CREATE TABLE IF NOT EXISTS todos (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		title TEXT NOT NULL,
+		completed INTEGER NOT NULL DEFAULT 0
+	);`
+
+	_, err := db.Exec(schema)
+	if err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
+	log.Println("migrations completed successfully.")
+}
+
+func runSeeders() {
+	log.Println("running database seeders...")
+	err := seeders.SeedTodos()
+	if err != nil {
+		log.Fatalf("failed to seed database: %v", err)
+	}
+	log.Println("seeding completed successfully.")
+}
+
+func runReset(db *sql.DB) {
+	log.Println("resetting database...")
+	_, err := db.Exec("DROP TABLE IF EXISTS todos;")
+	if err != nil {
+		log.Fatalf("failed to reset database: %v", err)
+	}
+	log.Println("database reset completed.")
+}
+
+
+================================================================================
+================================================================================
+DROP TABLE IF EXISTS todos;
+
+
+================================================================================
+================================================================================
+CREATE TABLE todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0
+);
+
+
+================================================================================
+================================================================================
+package seeders
+
+import (
+	"fmt"
+	"govemvc/models"
+)
+
+// SeedTodos populates the todos table with initial sample data.
+func SeedTodos() error {
+	samples := []string{
+		"Learn Golang Standard Library",
+		"Design GOVEMVC Standard Convention",
+		"Build reactive real-time Todo App",
+		"Deploy with Multi-stage Docker container",
+	}
+
+	for _, title := range samples {
+		_, err := models.CreateTodo(title)
+		if err != nil {
+			return fmt.Errorf("failed to seed todo '%s': %w", title, err)
+		}
+	}
+	return nil
+}
+
+
+================================================================================
+================================================================================
+package middleware
+
+import (
+	"log"
+	"net/http"
+	"time"
+)
+
+// Middleware defines a function that wraps an http.Handler.
+type Middleware func(http.Handler) http.Handler
+
+// Chain aggregates multiple middlewares into a single sequential execution pipeline.
+func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
+}
+
+// Logger intercepts request metadata and logs the execution duration.
+func Logger() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			next.ServeHTTP(w, r)
+			log.Printf("%s %s %s %s", r.Method, r.RequestURI, r.RemoteAddr, time.Since(start))
+		})
+	}
+}
+
+// SecurityHeaders injects standard defensive browser protection headers.
+func SecurityHeaders() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:;")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+
+================================================================================
+================================================================================
+package models
+
+import (
+	"database/sql"
+	"log"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+var DB *sql.DB
+
+// InitDB opens a connection to the SQLite database and runs migrations.
+func InitDB(dataSourceName string) {
+	var err error
+	DB, err = sql.Open("sqlite3", dataSourceName)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+
+	if err = DB.Ping(); err != nil {
+		log.Fatalf("failed to ping database: %v", err)
+	}
+
+	schema := `
+	CREATE TABLE IF NOT EXISTS todos (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		title TEXT NOT NULL,
+		completed INTEGER NOT NULL DEFAULT 0
+	);`
+
+	_, err = DB.Exec(schema)
+	if err != nil {
+		log.Fatalf("failed to run database migrations: %v", err)
+	}
+}
+
+
+================================================================================
+================================================================================
+package models
+
+import (
+	"fmt"
+)
+
+// Todo represents a task item in the database.
+type Todo struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Completed bool   `json:"completed"`
+}
+
+// GetAllTodos retrieves all todo items from the database.
+func GetAllTodos() ([]Todo, error) {
+	rows, err := DB.Query("SELECT id, title, completed FROM todos ORDER BY id DESC")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query todos: %w", err)
+	}
+	defer rows.Close()
+
+	var todos []Todo
+	for rows.Next() {
+		var t Todo
+		var compVal int
+		if err := rows.Scan(&t.ID, &t.Title, &compVal); err != nil {
+			return nil, fmt.Errorf("failed to scan todo row: %w", err)
+		}
+		t.Completed = compVal == 1
+		todos = append(todos, t)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return todos, nil
+}
+
+// CreateTodo inserts a new todo item into the database.
+func CreateTodo(title string) (int64, error) {
+	result, err := DB.Exec("INSERT INTO todos (title, completed) VALUES (?, 0)", title)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert todo: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last inserted id: %w", err)
+	}
+
+	return id, nil
+}
+
+// ToggleTodo updates the completion status of a todo item.
+func ToggleTodo(id int64, completed bool) error {
+	compVal := 0
+	if completed {
+		compVal = 1
+	}
+
+	_, err := DB.Exec("UPDATE todos SET completed = ? WHERE id = ?", compVal, id)
+	if err != nil {
+		return fmt.Errorf("failed to update todo: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteTodo removes a todo item from the database.
+func DeleteTodo(id int64) error {
+	_, err := DB.Exec("DELETE FROM todos WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete todo: %w", err)
+	}
+
+	return nil
+}
+
+
+================================================================================
+================================================================================
+package routes
+
+import (
+	"net/http"
+
+	"govemvc/controllers"
+	"govemvc/middleware"
+)
+
+// RegisterRoutes constructs a new native ServeMux and registers all handlers.
+func RegisterRoutes() http.Handler {
+	mux := http.NewServeMux()
+
+	// Static Assets Route
+	fileServer := http.FileServer(http.Dir("views/static"))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+
+	// Application Routes (using Go 1.22+ native routing features)
+	mux.HandleFunc("GET /", controllers.IndexHandler)
+	mux.HandleFunc("POST /todos", controllers.CreateTodoHandler)
+	mux.HandleFunc("POST /todos/{id}/toggle", controllers.ToggleTodoHandler)
+	mux.HandleFunc("DELETE /todos/{id}", controllers.DeleteTodoHandler)
+
+	// WebSocket Route
+	mux.HandleFunc("GET /ws", controllers.WebSocketHandler)
+
+	// Chain and return the global middleware protection pipeline
+	return middleware.Chain(
+		mux,
+		middleware.SecurityHeaders(),
+		middleware.Logger(),
+	)
+}
+
+
+================================================================================
+================================================================================
+package integration
+
+import (
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+
+	"govemvc/controllers"
+	"govemvc/models"
+	"govemvc/websocket"
+)
+
+func TestMain(m *testing.M) {
+	// Change working directory to project root (2 levels up) so views/ can be resolved
+	if err := os.Chdir("../.."); err != nil {
+		log.Fatalf("failed to change directory to project root: %v", err)
+	}
+
+	// Start websocket active hub in a background Goroutine to prevent deadlocks on broadcasts
+	go websocket.ActiveHub.Start()
+
+	// Use official SQLite in-memory database as a mock database
+	testDBPath := ":memory:"
+	models.InitDB(testDBPath)
+
+	code := m.Run()
+
+	if models.DB != nil {
+		models.DB.Close()
+	}
+
+	os.Exit(code)
+}
+
+func TestIndexHandler(t *testing.T) {
+	req, err := http.NewRequest("GET", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(controllers.IndexHandler)
+
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "Todo List") {
+		t.Errorf("rendered body does not contain 'Todo List'")
+	}
+}
+
+func TestCreateTodoHandler(t *testing.T) {
+	data := url.Values{}
+	data.Set("title", "Integration Test Task")
+
+	req, err := http.NewRequest("POST", "/todos", strings.NewReader(data.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(controllers.CreateTodoHandler)
+
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusSeeOther {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusSeeOther)
+	}
+}
+
+
+================================================================================
+================================================================================
+#!/bin/bash
+
+# GOVEMVC Test Runner & Result Aggregator
+# Automates test execution and compiles test results/coverage reports into tests/results/
+
+set -e
+
+# Resolve directory paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Define cleanup trap to ensure files are ALWAYS restored to underscore-free camelCase
+restoreNames() {
+	mv -f "$SCRIPT_DIR/unit/todoModel_test.go" "$SCRIPT_DIR/unit/todoModelTest.go" 2>/dev/null || true
+	mv -f "$SCRIPT_DIR/integration/todoController_test.go" "$SCRIPT_DIR/integration/todoControllerTest.go" 2>/dev/null || true
+}
+trap restoreNames EXIT
+
+echo "=== GOVEMVC TEST RUNNER ==="
+echo "Project Root: $ROOT_DIR"
+echo "Cleaning old test results..."
+rm -f "$SCRIPT_DIR/results/coverage.out"
+rm -f "$SCRIPT_DIR/results/coverage.html"
+rm -f "$SCRIPT_DIR/results/testReport.log"
+
+echo "Preparing test files for Go toolchain compilation..."
+# Dynamically rename test files to follow Go compiler's strict suffix requirement
+mv "$SCRIPT_DIR/unit/todoModelTest.go" "$SCRIPT_DIR/unit/todoModel_test.go"
+mv "$SCRIPT_DIR/integration/todoControllerTest.go" "$SCRIPT_DIR/integration/todoController_test.go"
+
+echo "Running unit and integration tests..."
+# Run tests and pipe verbose output to log file
+go test -v -coverpkg=govemvc/models,govemvc/controllers,govemvc/websocket "$ROOT_DIR/tests/unit" "$ROOT_DIR/tests/integration" -coverprofile="$SCRIPT_DIR/results/coverage.out" > "$SCRIPT_DIR/results/testReport.log" 2>&1 || true
+
+# Restore names immediately after go test is finished
+restoreNames
+
+# Validate test outputs
+if grep -q "FAIL" "$SCRIPT_DIR/results/testReport.log"; then
+    echo "Some tests failed! Review details in: tests/results/testReport.log"
+    exit 1
+else
+    echo "All tests passed successfully!"
+fi
+
+echo "Generating HTML coverage report..."
+go tool cover -html="$SCRIPT_DIR/results/coverage.out" -o "$SCRIPT_DIR/results/coverage.html"
+
+echo "Reports successfully gathered under tests/results/:"
+echo "  - Log Output: tests/results/testReport.log"
+echo "  - Coverage Profile: tests/results/coverage.out"
+echo "  - HTML Coverage Map: tests/results/coverage.html"
+echo "=============================="
+
+
+================================================================================
+================================================================================
+package unit
+
+import (
+	"log"
+	"os"
+	"testing"
+
+	"govemvc/models"
+)
+
+func TestMain(m *testing.M) {
+	// Change working directory to project root (2 levels up) so views/ can be resolved
+	if err := os.Chdir("../.."); err != nil {
+		log.Fatalf("failed to change directory to project root: %v", err)
+	}
+
+	// Use official SQLite in-memory database as a mock database
+	testDBPath := ":memory:"
+	models.InitDB(testDBPath)
+
+	code := m.Run()
+
+	if models.DB != nil {
+		models.DB.Close()
+	}
+
+	os.Exit(code)
+}
+
+func TestTodoCRUD(t *testing.T) {
+	title := "Test Go Task in Unit"
+	id, err := models.CreateTodo(title)
+	if err != nil {
+		t.Fatalf("failed to create todo: %v", err)
+	}
+
+	if id <= 0 {
+		t.Errorf("expected positive ID, got %d", id)
+	}
+
+	todos, err := models.GetAllTodos()
+	if err != nil {
+		t.Fatalf("failed to get todos: %v", err)
+	}
+
+	found := false
+	for _, todo := range todos {
+		if todo.ID == id && todo.Title == title {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("created todo with id %d and title '%s' not found in database", id, title)
+	}
+
+	err = models.ToggleTodo(id, true)
+	if err != nil {
+		t.Fatalf("failed to toggle todo status: %v", err)
+	}
+
+	todos, err = models.GetAllTodos()
+	if err != nil {
+		t.Fatalf("failed to get todos after update: %v", err)
+	}
+
+	for _, todo := range todos {
+		if todo.ID == id {
+			if !todo.Completed {
+				t.Errorf("expected todo to be completed, got false")
+			}
+			break
+		}
+	}
+
+	err = models.DeleteTodo(id)
+	if err != nil {
+		t.Fatalf("failed to delete todo: %v", err)
+	}
+
+	todos, err = models.GetAllTodos()
+	if err != nil {
+		t.Fatalf("failed to get todos after deletion: %v", err)
+	}
+
+	for _, todo := range todos {
+		if todo.ID == id {
+			t.Errorf("expected todo with id %d to be deleted, but it still exists", id)
+		}
+	}
+}
+
+
+================================================================================
+================================================================================
+package websocket
+
+import (
+	"crypto/sha1"
+	"encoding/base64"
+	"fmt"
+	"net"
+	"net/http"
+	"sync"
+)
+
+// Client represents a connected websocket client.
+type Client struct {
+	Conn net.Conn
+	Send chan []byte
+}
+
+// Hub manages active connections and broadcasts.
+type Hub struct {
+	Clients    map[*Client]bool
+	Broadcast  chan []byte
+	Register   chan *Client
+	Unregister chan *Client
+	mu         sync.RWMutex
+}
+
+// ActiveHub is the global real-time coordinator.
+var ActiveHub = &Hub{
+	Clients:    make(map[*Client]bool),
+	Broadcast:  make(chan []byte),
+	Register:   make(chan *Client),
+	Unregister: make(chan *Client),
+}
+
+// Start runs the hub communication loops.
+func (h *Hub) Start() {
+	for {
+		select {
+		case client := <-h.Register:
+			h.mu.Lock()
+			h.Clients[client] = true
+			h.mu.Unlock()
+		case client := <-h.Unregister:
+			h.mu.Lock()
+			if _, ok := h.Clients[client]; ok {
+				delete(h.Clients, client)
+				close(client.Send)
+			}
+			h.mu.Unlock()
+		case message := <-h.Broadcast:
+			h.mu.RLock()
+			for client := range h.Clients {
+				select {
+				case client.Send <- message:
+				default:
+					h.mu.RUnlock()
+					h.mu.Lock()
+					delete(h.Clients, client)
+					close(client.Send)
+					h.mu.Unlock()
+					h.mu.RLock()
+				}
+			}
+			h.mu.RUnlock()
+		}
+	}
+}
+
+// Upgrade upgrades the HTTP connection to WebSocket manually using http.Hijacker.
+func Upgrade(w http.ResponseWriter, r *http.Request) (net.Conn, error) {
+	if r.Header.Get("Upgrade") != "websocket" {
+		return nil, fmt.Errorf("invalid upgrade header")
+	}
+
+	key := r.Header.Get("Sec-WebSocket-Key")
+	if key == "" {
+		return nil, fmt.Errorf("missing Sec-WebSocket-Key")
+	}
+
+	guid := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	h := sha1.New()
+	h.Write([]byte(key + guid))
+	acceptKey := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return nil, fmt.Errorf("webserver does not support hijacking")
+	}
+
+	conn, bufrw, err := hijacker.Hijack()
+	if err != nil {
+		return nil, fmt.Errorf("failed to hijack connection: %w", err)
+	}
+
+	response := fmt.Sprintf(
+		"HTTP/1.1 101 Switching Protocols\r\n"+
+			"Upgrade: websocket\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Sec-WebSocket-Accept: %s\r\n\r\n",
+		acceptKey,
+	)
+
+	_, err = bufrw.WriteString(response)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to write handshake response: %w", err)
+	}
+	bufrw.Flush()
+
+	return conn, nil
+}
+
+// WriteFrame formats and writes a text frame to the connection.
+func WriteFrame(conn net.Conn, payload []byte) error {
+	length := len(payload)
+	var header []byte
+
+	header = append(header, 0x81)
+
+	if length <= 125 {
+		header = append(header, byte(length))
+	} else if length <= 65535 {
+		header = append(header, 126)
+		header = append(header, byte(length>>8))
+		header = append(header, byte(length&0xFF))
+	} else {
+		header = append(header, 127)
+		for i := 7; i >= 0; i-- {
+			header = append(header, byte(length>>(i*8)))
+		}
+	}
+
+	if _, err := conn.Write(append(header, payload...)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReadLoop reads from connection to detect close frames and discard data.
+func (c *Client) ReadLoop() {
+	defer func() {
+		ActiveHub.Unregister <- c
+		c.Conn.Close()
+	}()
+
+	buf := make([]byte, 1024)
+	for {
+		n, err := c.Conn.Read(buf)
+		if err != nil {
+			break
+		}
+
+		if n > 0 {
+			opcode := buf[0] & 0x0F
+			if opcode == 8 {
+				break
+			}
+		}
+	}
+}
+
+// WriteLoop writes messages to the client connection.
+func (c *Client) WriteLoop() {
+	defer func() {
+		c.Conn.Close()
+	}()
+
+	for msg := range c.Send {
+		if err := WriteFrame(c.Conn, msg); err != nil {
+			break
+		}
+	}
+}
+
+
