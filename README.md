@@ -24,11 +24,11 @@ Below is the directory hierarchy implemented in this reference Todo application:
 ```text
 /govemvc (Project Root)
 ├── /cmd                      # Application entry points
-│   ├── /app
-│   │   └── main.go           # Main web server bootstrap (Configuration, DB init, & WS Hub)
-│   └── /dbtool
-│       └── main.go           # CLI database tool (migrate, seed, rollback, reset)
+│   └── /app
+│       └── main.go           # Main web server bootstrap (Configuration, DB init, & WS Hub)
 ├── /database                 # Database schema and mock data administration
+│   ├── /dbtool
+│   │   └── main.go           # CLI database tool (migrate, seed, rollback, reset)
 │   ├── /migrations           # Versioned incremental raw SQL schema alterations
 │   │   ├── 0001_create_todos_table.down.sql   # Rollback database schema script
 │   │   └── 0001_create_todos_table.up.sql     # Create database schema script (Official Schema)
@@ -41,7 +41,7 @@ Below is the directory hierarchy implemented in this reference Todo application:
 │   │   └── todo_controller_test.go    # HTTP Handlers, Routing, & SSR rendering integration tests
 │   ├── /results                       # Center of compiled test artifacts (Git tracked)
 │   │   ├── coverage.html              # Interactive HTML code coverage visual map
-│   │   ├── coverage.out               # Go test coverage binary profile
+│   │   ├── coverage.out               # Go test coverage profile
 │   │   └── test_report.log            # Verbose test runner terminal execution logs
 │   └── run_tests.sh                   # Automator script executing tests and compiling reports
 ├── /middleware               # Global HTTP pipeline interceptors (Logging, Security protection headers)
@@ -83,16 +83,16 @@ Clone the template configuration file to activate local development variables:
 ```bash
 cp .env.example .env
 ```
-*(By default, `.env` is configured to run the web server on port `8080` with a local SQLite database named `govemvc.db`).*
+*(By default, `.env` is configured to run the web server on port `8080` with a local SQLite database named `database/govemvc.db`).*
 
 ### 2. Administer Database Migrations & Seeds
 Run database migrations and populate the SQLite database with initial sample mock tasks using the unified CLI tool:
 ```bash
 # Apply incremental migrations (creates todos table)
-go run cmd/dbtool/main.go migrate
+go run database/dbtool/main.go migrate
 
 # Populate sample data seeder
-go run cmd/dbtool/main.go seed
+go run database/dbtool/main.go seed
 ```
 
 ### 3. Launch the Web Application
@@ -111,14 +111,14 @@ Open your browser and navigate to **`http://localhost:8080`** to experience the 
 
 ## Database CLI Tool (`dbtool`) Reference
 
-A lightweight command-line database manager is located at `/cmd/dbtool`. It supports the following management commands:
+A lightweight command-line database manager is located at `/database/dbtool`. It supports the following management commands:
 
 | Command | Action |
 | :--- | :--- |
-| `go run cmd/dbtool/main.go migrate` | Applies all outstanding SQL migrations up. |
-| `go run cmd/dbtool/main.go rollback` | Reverts the last database migrations down. |
-| `go run cmd/dbtool/main.go seed` | Runs the Go data seeders to populate mock data. |
-| `go run cmd/dbtool/main.go reset` | Wipes the entire database schema and applies fresh migrations/seeders. |
+| `go run database/dbtool/main.go migrate` | Applies all outstanding SQL migrations up. |
+| `go run database/dbtool/main.go rollback` | Reverts the last database migrations down. |
+| `go run database/dbtool/main.go seed` | Runs the Go data seeders to populate mock data. |
+| `go run database/dbtool/main.go reset` | Wipes the entire database schema and applies fresh migrations/seeders. |
 
 ---
 
