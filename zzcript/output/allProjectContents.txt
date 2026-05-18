@@ -1,0 +1,1824 @@
+================================================================================
+GOVEMVC ALL SOURCE CODE EXPORT DUMP
+
+This document contains a comprehensive, consolidated dump of all source code files
+comprising the GOVEMVC project. It includes core boot handlers, MVC layers, databases,
+real-time WebSocket protocols, and isolated unit/integration testing suites.
+
+Utilize this consolidated text to review the entire application architecture, perform
+full-system audits, or transport code cleanly across sandboxed development hosts.
+Generated on: Tue May 19 04:57:23 AM WITA 2026
+================================================================================
+
+================================================================================
+================================================================================
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+
+	"govemvc/models"
+	"govemvc/routes"
+	"govemvc/websocket"
+)
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "database/govemvc.db"
+	}
+
+	log.Printf("initializing database at %s...", dbPath)
+	models.InitDB(dbPath)
+
+	log.Println("starting websocket active hub...")
+	go websocket.ActiveHub.Start()
+
+	router := routes.RegisterRoutes()
+
+	addr := ":" + port
+	log.Printf("server is starting and listening on http://localhost%s", addr)
+	if err := http.ListenAndServe(addr, router); err != nil {
+		log.Fatalf("failed to start server: %v", err)
+	}
+}
+
+
+================================================================================
+================================================================================
+package controllers
+
+import (
+	"encoding/json"
+	"html/template"
+	"net/http"
+	"strconv"
+
+	"govemvc/models"
+	"govemvc/websocket"
+)
+
+// IndexHandler renders the main dashboard page with all todo items.
+func IndexHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	todos, err := models.GetAllTodos()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tmpl, err := template.ParseFiles("views/layouts/base.html", "views/pages/index.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Todos": todos,
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "base", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// CreateTodoHandler processes a POST request to add a new todo.
+func CreateTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	title := r.FormValue("title")
+	if title == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := models.CreateTodo(title)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "create",
+		"todo": map[string]interface{}{
+			"id":        id,
+			"title":     title,
+			"completed": false,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// ToggleTodoHandler toggles a todo's completed status.
+func ToggleTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var reqBody struct {
+		Completed bool `json:"completed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if err := models.ToggleTodo(id, reqBody.Completed); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "toggle",
+		"todo": map[string]interface{}{
+			"id":        id,
+			"completed": reqBody.Completed,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// DeleteTodoHandler deletes a todo item.
+func DeleteTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	if err := models.DeleteTodo(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "delete",
+		"todo": map[string]interface{}{
+			"id": id,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// WebSocketHandler upgrades and establishes the real-time websocket connection.
+func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Upgrade(w, r)
+	if err != nil {
+		http.Error(w, "failed to upgrade: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	client := &websocket.Client{
+		Conn: conn,
+		Send: make(chan []byte, 256),
+	}
+
+	websocket.ActiveHub.Register <- client
+
+	go client.WriteLoop()
+	go client.ReadLoop()
+}
+
+
+================================================================================
+================================================================================
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+
+	"govemvc/database/seeders"
+	"govemvc/models"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+func main() {
+	flag.Parse()
+	args := flag.Args()
+
+	if len(args) < 1 {
+		fmt.Println("Usage: go run database/dbtool/main.go [migrate|seed|reset]")
+		os.Exit(1)
+	}
+
+	command := args[0]
+
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "database/govemvc.db"
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	models.DB = db
+
+	switch command {
+	case "migrate":
+		runMigrations(db)
+	case "seed":
+		runSeeders()
+	case "reset":
+		runReset(db)
+	default:
+		fmt.Printf("unknown command: %s\n", command)
+		os.Exit(1)
+	}
+}
+
+func runMigrations(db *sql.DB) {
+	log.Println("running database migrations...")
+	schema := `
+	CREATE TABLE IF NOT EXISTS todos (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		title TEXT NOT NULL,
+		completed INTEGER NOT NULL DEFAULT 0
+	);`
+
+	_, err := db.Exec(schema)
+	if err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
+	log.Println("migrations completed successfully.")
+}
+
+func runSeeders() {
+	log.Println("running database seeders...")
+	err := seeders.SeedTodos()
+	if err != nil {
+		log.Fatalf("failed to seed database: %v", err)
+	}
+	log.Println("seeding completed successfully.")
+}
+
+func runReset(db *sql.DB) {
+	log.Println("resetting database...")
+	_, err := db.Exec("DROP TABLE IF EXISTS todos;")
+	if err != nil {
+		log.Fatalf("failed to reset database: %v", err)
+	}
+	log.Println("database reset completed.")
+}
+
+
+================================================================================
+================================================================================
+DROP TABLE IF EXISTS todos;
+
+
+================================================================================
+================================================================================
+CREATE TABLE todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0
+);
+
+
+================================================================================
+================================================================================
+package seeders
+
+import (
+	"fmt"
+	"govemvc/models"
+)
+
+// SeedTodos populates the todos table with initial sample data.
+func SeedTodos() error {
+	samples := []string{
+		"Learn Golang Standard Library",
+		"Design GOVEMVC Standard Convention",
+		"Build reactive real-time Todo App",
+		"Deploy with Multi-stage Docker container",
+	}
+
+	for _, title := range samples {
+		_, err := models.CreateTodo(title)
+		if err != nil {
+			return fmt.Errorf("failed to seed todo '%s': %w", title, err)
+		}
+	}
+	return nil
+}
+
+
+================================================================================
+================================================================================
+module govemvc
+
+go 1.22.2
+
+require github.com/mattn/go-sqlite3 v1.14.44 // indirect
+
+
+================================================================================
+================================================================================
+# GOVEMVC.md: Standard Architecture Convention for Vendor-Driven & Standard-Library Golang Applications
+
+This document defines **GOVEMVC** (Go Vendor & Standard MVC), an architectural convention and design pattern for building robust, high-performance web applications using native ecosystems. This convention is built on the core principle that Golang's built-in Standard Library is exceptionally powerful and sufficient for production needs, offering a minimalist, zero-dependency alternative to third-party web frameworks.
+
+---
+
+## 1. Directory Structure Standard (Tree Folder)
+
+Every application adhering to the GOVEMVC convention must implement the semantic folder structure below to strictly separate concerns without altering Go's native package ecosystem. The folder and file hierarchy is structured as follows, utilizing descriptive representative naming for illustration:
+
+```text
+/theParentProjectRoot
+├── /theCommandEntryPointFolder
+│   ├── /theMainApplicationFolder
+│   │   └── theMainApplicationExecutableBootstrap.go   # Application entry point (boots server & WS hub)
+│   └── /theCommandLineDatabaseToolFolder
+│       └── theDatabaseCLICommandTool.go               # Artisan-like DB CLI tool (migrate, seed, reset)
+├── /theGlobalDatabaseManagementFolder
+│   ├── /theDatabaseMigrationsFolder
+│   │   ├── theFirstIncrementalSchemaMigrationUpScript.sql
+│   │   ├── theFirstIncrementalSchemaMigrationDownScript.sql
+│   │   ├── theSecondIncrementalSchemaMigrationUpScript.sql
+│   │   └── theSecondIncrementalSchemaMigrationDownScript.sql
+│   └── /theDatabaseDataSeedersFolder
+│       └── theInitialDefaultDataSeederScript.go
+├── /theGlobalTestingSuitesFolder
+│   ├── /theIsolatedUnitTestsFolder
+│   │   └── theDataModelsLogicUnitTest.go              # Isolated data model CRUD tests
+│   ├── /theHTTPIntegrationTestsFolder
+│   │   └── theControllerHTTPResponseIntegrationTest.go # End-to-end controllers & SSR tests
+│   └── /theAggregatedTestReportsFolder                # Central repository for test artifacts
+│       ├── theAutomatedTestRunnerTerminalOutput.log   # Plaintext verbose execution logs
+│       ├── theGoTestCoverageBinaryProfile.out         # Raw binary coverage profile data
+│       └── theVisualHTMLCoverageMapReport.html        # Interactive HTML test coverage map
+│   └── theCentralTestAutomatorShellScript.sh          # Test runner script (runs tests & compiles reports)
+├── /theHTTPInterceptorsMiddlewarePipelineFolder
+│   └── theSecurityHeadersAndLoggerMiddleware.go        # Logging and security policies layer
+├── /theDataStructuresAndQueriesModelLayerFolder
+│   ├── theDatabaseEngineConnectionBootstrap.go         # SQL connection pool manager
+│   └── theBusinessEntityDataAccessQueries.go          # Parameterized SQL business queries
+├── /theHTTPBusinessLogicControllersLayerFolder
+│   └── theBusinessEntityHTTPHandlerControllers.go      # Handlers resolving requests and templates
+├── /theRoutingMappingsDefinitionsFolder
+│   └── theURLPathWildcardRoutesRegister.go            # Maps wildcard URL routing to controllers
+├── /theRealtimeCommunicationWebSocketEngineFolder
+│   └── theWebSocketUpgraderAndClientBroadcastHub.go   # Upgrades TCP protocols and manages WS state
+├── /theFrontendTemplatesViewsFolder
+│   ├── /theMasterLayoutSkeletonsFolder
+│   │   └── theBaseHTMLSkeletonLayoutTemplate.html     # Outer master HTML shell
+│   ├── /theRenderedPagesSubTemplatesFolder
+│   │   └── theSpecificFeatureDashboardViewTemplate.html # Page sub-template containing content
+│   └── /theStaticAssetsAndMediaFolder
+│       ├── thePremiumGlobalThemeVanillaCSSStyles.css  # Sleek styles (gradients, animations)
+│       └── theWebSocketDynamicEventsControllerVanillaJS.js # AJAX fetch and WS auto-reconnect logic
+├── theLocalPrivateEnvironmentConfigurations.env        # Local sensitive settings (ignored in Git)
+├── thePublicTemplateEnvironmentConfigurations.env.example # Outlines required ENV parameters
+├── theMultiStageContainerDeploymentBlueprintDockerfile # Container compiler and minimalistic runner
+├── theMultiContainerOrchestrationServiceCompose.yml     # Orchestration definitions (app & volume)
+└── theGoModuleDependencySpecification.mod              # Go dependencies file
+```
+
+---
+
+## 2. Tech Stack Specification & Implementation Rules
+
+### A. Backend & Routing (`net/http`)
+
+* **Absolute Convention:** Routing must be handled directly by Go's built-in `http.NewServeMux()` without incorporating external routing packages.
+* **Large-Scale Implementation:** Leverage the dynamic wildcard routing features native to modern Go to handle URL path parameters semantically. For example:
+  ```go
+  mux.HandleFunc("GET /resources/{resourceID}/subresources/{subID}", controllers.GetResourceHandler)
+  ```
+* **Characteristics:** This approach completely eliminates the memory overhead caused by layers of third-party framework code, ensuring optimal, ultra-fast, and highly efficient HTTP request handling performance.
+
+### B. Data Layer (`database/sql` + Vendor Driver)
+
+* **Absolute Convention:** To demonstrate clean SQL practices and maintain full control over query performance, the application chooses to use the standard `database/sql` package directly instead of relying on external ORMs (Object-Relational Mapping).
+* **Large-Scale Implementation:**
+  * Database connectivity must be bridged directly by the driver released by the respective database vendor (e.g., `github.com/mattn/go-sqlite3` for SQLite).
+  * All data manipulation operations (CRUD) must be executed using raw SQL queries.
+  * For heavy data volumes, performance optimization must focus strictly on creating robust database-level indexing directly on relational key columns.
+
+### C. Real-Time Engine (Pure WebSocket via `http.Hijacker`)
+
+* **Absolute Convention:** To demonstrate native protocol engineering, the process of upgrading HTTP connections to WebSockets is executed directly via the standard library's `http.Hijacker` interface, avoiding external WebSocket packages.
+* **Large-Scale Implementation:**
+  * The real-time endpoint intercepts standard HTTP requests and hijacks the underlying TCP network connection to make it persistent.
+  * The WebSocket handshake calculations (computing the `Sec-WebSocket-Accept` key) are processed independently using built-in functions from the `crypto/sha1` and `encoding/base64` packages.
+  * Each client connection is represented by a single, highly lightweight Goroutine (~2 KB initial memory allocation). Coordination across connections is managed within the `/websocket` directory using Go's native `Map` and `RWMutex` types to ensure complete thread-safety against race conditions during simultaneous traffic surges.
+
+### D. Frontend Interface (`html/template` & Native CSS)
+
+* **Absolute Convention:** The application UI relies on pure Server-Side Rendering (SSR) via Go's built-in `html/template` package, keeping the deployment architecture simple and lightweight without requiring complex external frontend build tools.
+* **Large-Scale Implementation:**
+  * The visual layout and structure of web pages are designed using Pure CSS via traditional static `.css` files.
+  * Dynamic UI elements (such as user online status indicators or dynamic color theme updates) have their property values injected directly through dynamic Inline CSS parsed from Go structs.
+  * Asynchronous client-side interactions and real-time data streaming are powered natively by browser APIs via Vanilla JavaScript using the `new WebSocket()` object, without requiring heavy JavaScript frameworks.
+
+### E. Infrastructure & Configuration (Multi-Stage Docker & Environment)
+
+* **Absolute Convention:** The application must be packaged into containers using a Dockerfile configured with a multi-stage build approach. External libraries for loading environment configurations must be avoided; standard configurations are read directly from environment variables.
+* **Large-Scale Implementation:**
+  * **Stage 1 (Build):** Utilizes the standard `golang:alpine` image to compile the entire Go source code into a single, self-contained binary file.
+  * **Stage 2 (Final):** The compiled binary is moved into a sterile, minimalist image like `scratch` or `alpine`. The final container remains extremely small (< 50 MB), contains no source code dependencies, and runs alongside the database container within an isolated internal network via `docker-compose.yml`. This guarantees high portability, allowing instantaneous deployment onto any VPS server.
+
+### F. Database Administration (Migrations & Seeders)
+
+* **Absolute Convention:** To ensure structural consistency and predictability, database schemas and default datasets are managed via versioned migrations and seeders rather than manual ad-hoc table adjustments in production.
+* **Large-Scale Implementation:**
+  * **Incremental SQL Migrations:** All schema changes must be saved as versioned, raw SQL scripts separated into UP (creating/altering tables) and DOWN (reverting changes) statements under `/database/migrations`.
+  * **Go Native Seeders:** System mock data or initial application datasets must be populated using native Go seeder scripts nested under `/database/seeders`.
+  * **Unified CLI DB Tool:** A lightweight DB Command Line Tool (`dbtool`) must be built under the `/database` directory (e.g., `/database/dbtool/main.go`) to parse server commands and easily run migrations, seeders, or database resets during production deployments.
+
+### G. Automated Testing Pipeline (Unit, Integration & Reports)
+
+* **Absolute Convention:** Codebases must be covered by structured test suites split by scope, using native test execution environments and vendor-provided in-memory databases to act as mock engines.
+* **Large-Scale Implementation:**
+  * **Unit Tests:** Organized under `/tests/unit`, verifying isolated models, structural algorithms, and data logic using sterile, extremely fast in-memory databases (e.g., SQLite `:memory:`).
+  * **Integration Tests:** Organized under `/tests/integration`, verifying HTTP endpoints, routing configurations, logger pipelines, security headers, and SSR page parsing using Go's native `net/http/httptest`.
+  * **Results Aggregation:** All output verbose test logs, binary profiles, and HTML visual reports must be compiled under `/tests/results/` (e.g., `testReport.log`, `coverage.out`, `coverage.html`).
+  * **Automated Runner Script:** A shell script `runTests.sh` must be configured at the tests root to wipe old data, execute Go tests with accurate `-coverpkg` references, and auto-generate premium interactive HTML visual coverage maps.
+
+---
+
+## 3. Code Writing Standards
+
+To maintain clean, uniform, and maintainable code across the entire architecture, GOVEMVC enforces strict adherence to native idiomatic Go guidelines:
+
+### A. Formatting and Layout (`gofmt`)
+
+* **Rule:** All source files must be formatted using the standard `gofmt` utility prior to compilation or version control check-in. Discussions regarding spacing, brackets, or code layouts are mitigated entirely by the native formatter.
+
+### B. Explicit Error Handling
+
+* **Rule:** Panics must not be used for normal flow control or standard execution paths; Go's native error return pattern must be explicitly followed.
+* **Rule:** Every operation capable of returning an error must have its error evaluated immediately via the explicit `if err != nil` check. Errors must be wrapped elegantly with contextual information using `fmt.Errorf` when propagated upward.
+
+### C. Visibility and Encapsulation
+
+* **Rule:** Package scope accessibility relies entirely on capitalization. Access modifier keywords do not exist.
+* **Rule:** Struct attributes, functions, and variables must begin with an uppercase letter to be exported outside their defining package (Public). They must begin with a lowercase letter if they are strictly internal to the package (Private).
+
+---
+
+## 4. Security Standards & Vulnerability Prevention
+
+GOVEMVC places premium importance on defensive coding. When building applications without heavy external frameworks, security controls must be explicitly implemented at the application layer using only Go's robust **Standard Library** and official Go-vetted sub-repositories (such as `golang.org/x/crypto`).
+
+### A. SQL Injection Prevention
+
+* **Rule:** To prevent SQL injection, user-supplied inputs or request parameters must never be concatenated directly into raw SQL queries.
+* **Rule:** All database actions executed via standard `database/sql` must employ parameterized placeholder arguments (e.g., `?` in SQLite/MySQL, or `$1`, `$2` in PostgreSQL).
+* **Rule:** Direct execution of raw dynamic queries is only permitted for compile-time constants. Any execution involving runtime inputs must use prepared statements or placeholder parameters.
+  ```go
+  // SECURE IMPLEMENTATION (SQLite)
+  db.QueryRow("SELECT id, title, completed FROM todos WHERE id = ? AND user_id = ?", todoID, userID)
+  ```
+
+### B. Cross-Site Scripting (XSS) Mitigation
+
+* **Rule:** Untrusted user input must never be rendered directly onto the document context without proper dynamic escaping or sanitization.
+* **Rule:** Output generation must rely entirely on Go's native `html/template` package. The built-in template engine automatically enforces context-aware data escaping (HTML, JavaScript, CSS attributes, and URIs) based on the variable's position inside the template text.
+* **Rule:** Strict browser protection must be enforced by injecting a comprehensive **Content-Security-Policy (CSP)** header globally via middleware (e.g., restricting script execution to `'self'`, disabling `'unsafe-inline'` where possible, or employing cryptographically secure nonces).
+
+### C. Cross-Site Request Forgery (CSRF) Prevention
+
+* **Rule:** State-changing requests (POST, PUT, DELETE, PATCH) must be protected against CSRF attacks.
+* **Rule:** The application must enforce a **Double-Submit Cookie Pattern** or secure token validation. Every dynamic form rendering must inject a unique, high-entropy CSRF token generated using cryptographically secure random numbers from the `crypto/rand` package (never use `math/rand`).
+* **Rule:** Every mutating HTTP request must validate that the incoming token in the request header or form parameter matches the token stored inside a secure CSRF cookie.
+* **Rule:** CSRF cookies must strictly declare the `HttpOnly` (preventing JS access), `Secure` (restricting transmission to HTTPS), and `SameSite=Strict` (barring cross-site requests) attributes.
+
+### D. Cryptographic and Password Hashing Standards
+
+* **Rule:** Passwords must never be stored as plaintext, MD5, SHA-1, or plain SHA-256 digests.
+* **Rule:** Password hashing must rely exclusively on the official Go vendor cryptography package: **`golang.org/x/crypto/bcrypt`**.
+* **Rule:** The work factor (Cost parameter) for Bcrypt must be explicitly configured to a minimum of **12** (or higher depending on server hardware) to defend against GPU-accelerated offline brute-force attacks.
+* **Rule:** Symmetric data encryption must use **AES-GCM** (Galois/Counter Mode) via `crypto/aes` and `crypto/cipher` standard library packages, utilizing a unique 12-byte initialization vector (IV) generated via `crypto/rand` for every single encryption cycle.
+* **Rule:** Legacy cryptographic hashes like MD5 or SHA-1 must not be used for sensitive data hashing, integrity checks, or user passwords due to known collision vulnerabilities (SHA-1 is only accepted during the native WebSocket upgrade handshake as mandated by RFC 6455).
+
+### E. Secure Session Management
+
+* **Rule:** Session identifiers (Session IDs) must be generated using cryptographically secure random bytes from `crypto/rand` with at least **32 bytes** (256 bits) of entropy, encoded using standard `encoding/hex` or `encoding/base64`.
+* **Rule:** Session cookies must always have the `HttpOnly`, `Secure` (in production), and `SameSite=Lax` or `SameSite=Strict` attributes declared.
+* **Rule:** Session tokens must be validated against a server-side storage map or database record during every request. Sessions must have a clear expiration limit (Session Timeout) and must be completely destroyed from server memory and database storage upon explicit user logout.
+
+### F. WebSocket Resource Safety & DoS Prevention
+
+* **Rule:** WebSocket upgrades must be authenticated beforehand. The HTTP handler upgrading the protocol must verify the active session cookie or auth token present in the initial HTTP upgrade request before invoking the `http.Hijacker` interface.
+* **Rule:** Handlers must explicitly evaluate the `Origin` header of the incoming upgrade request against an authorized domain whitelist to prevent Cross-Site WebSocket Hijacking (CSWSH) attacks.
+* **Rule:** To prevent Denial of Service (DoS) and memory exhaustion, incoming packet sizes must be strictly capped (e.g., maximum read limit of 1024 to 4096 bytes).
+* **Rule:** Network read and write deadlines must be declared dynamically per connection using the underlying net.Conn methods (`SetReadDeadline`, `SetWriteDeadline`) to automatically sever hung or slow-loris connections.
+* **Rule:** Goroutine Leaks must be strictly prevented. When a connection severs, is closed by the client, or hits a deadline timeout, the WebSocket hub must cleanly close channels, remove the client from active mappings, and terminate the connection's background Goroutine loops.
+
+### G. Centralized Middleware Control & Rate Limiting
+
+* **Rule:** Global security policies must be isolated inside the `/middleware` pipeline to guarantee that individual controller handlers cannot accidentally bypass security controls.
+* **Rule:** Core security headers must be injected into every HTTP response:
+  * `X-Frame-Options: DENY` (prevents clickjacking).
+  * `X-Content-Type-Options: nosniff` (prevents MIME-sniffing).
+  * `Referrer-Policy: strict-origin-when-cross-origin` (protects referrer data).
+  * `Content-Security-Policy` (mitigates XSS).
+* **Rule:** To prevent brute-force attacks and application-layer DoS, active **Rate Limiting** must be enforced globally or on sensitive routes (e.g., login, password reset). Rate limiting must be implemented natively using Go standard library primitives—such as a thread-safe `sync.Map` tracking client IPs and custom token-bucket or sliding-window algorithms driven by standard `time.Ticker` clocks.
+
+---
+
+
+## 5. GOVEMVC Architecture Benefits
+
+By consistently applying the GOVEMVC convention, developers gain absolute, long-term stability:
+
+1. **Complete Freedom:** The semantic folder structure gives developers total flexibility to map business logic without being constrained by rigid file placement rules imposed by a framework.
+2. **Resource Efficiency:** Utilizing Goroutines instead of traditional operating system threads drastically reduces server RAM consumption, minimizing the risks of system crashes under high traffic loads.
+3. **Long Code Lifecycle:** The application remains entirely safe from breaking changes or deprecation issues tied to third-party dependencies that are suddenly abandoned or drastically modified during version updates.
+
+
+================================================================================
+================================================================================
+package middleware
+
+import (
+	"log"
+	"net/http"
+	"time"
+)
+
+// Middleware defines a function that wraps an http.Handler.
+type Middleware func(http.Handler) http.Handler
+
+// Chain aggregates multiple middlewares into a single sequential execution pipeline.
+func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
+}
+
+// Logger intercepts request metadata and logs the execution duration.
+func Logger() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			next.ServeHTTP(w, r)
+			log.Printf("%s %s %s %s", r.Method, r.RequestURI, r.RemoteAddr, time.Since(start))
+		})
+	}
+}
+
+// SecurityHeaders injects standard defensive browser protection headers.
+func SecurityHeaders() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:;")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+
+================================================================================
+================================================================================
+package models
+
+import (
+	"database/sql"
+	"log"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+var DB *sql.DB
+
+// InitDB opens a connection to the SQLite database and runs migrations.
+func InitDB(dataSourceName string) {
+	var err error
+	DB, err = sql.Open("sqlite3", dataSourceName)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+
+	if err = DB.Ping(); err != nil {
+		log.Fatalf("failed to ping database: %v", err)
+	}
+
+	schema := `
+	CREATE TABLE IF NOT EXISTS todos (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		title TEXT NOT NULL,
+		completed INTEGER NOT NULL DEFAULT 0
+	);`
+
+	_, err = DB.Exec(schema)
+	if err != nil {
+		log.Fatalf("failed to run database migrations: %v", err)
+	}
+}
+
+
+================================================================================
+================================================================================
+package models
+
+import (
+	"fmt"
+)
+
+// Todo represents a task item in the database.
+type Todo struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Completed bool   `json:"completed"`
+}
+
+// GetAllTodos retrieves all todo items from the database.
+func GetAllTodos() ([]Todo, error) {
+	rows, err := DB.Query("SELECT id, title, completed FROM todos ORDER BY id DESC")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query todos: %w", err)
+	}
+	defer rows.Close()
+
+	var todos []Todo
+	for rows.Next() {
+		var t Todo
+		var compVal int
+		if err := rows.Scan(&t.ID, &t.Title, &compVal); err != nil {
+			return nil, fmt.Errorf("failed to scan todo row: %w", err)
+		}
+		t.Completed = compVal == 1
+		todos = append(todos, t)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return todos, nil
+}
+
+// CreateTodo inserts a new todo item into the database.
+func CreateTodo(title string) (int64, error) {
+	result, err := DB.Exec("INSERT INTO todos (title, completed) VALUES (?, 0)", title)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert todo: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last inserted id: %w", err)
+	}
+
+	return id, nil
+}
+
+// ToggleTodo updates the completion status of a todo item.
+func ToggleTodo(id int64, completed bool) error {
+	compVal := 0
+	if completed {
+		compVal = 1
+	}
+
+	_, err := DB.Exec("UPDATE todos SET completed = ? WHERE id = ?", compVal, id)
+	if err != nil {
+		return fmt.Errorf("failed to update todo: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteTodo removes a todo item from the database.
+func DeleteTodo(id int64) error {
+	_, err := DB.Exec("DELETE FROM todos WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete todo: %w", err)
+	}
+
+	return nil
+}
+
+
+================================================================================
+================================================================================
+# GOVEMVC
+
+GOVEMVC (Go Vendor & Standard MVC) is a lightweight, high-performance architectural convention designed to build robust web applications using Golang's native Standard Library paired with official database drivers. It offers a clean, transparent, and secure alternative for developers who prioritize control, performance, and zero third-party dependency bloat.
+
+## Why GOVEMVC?
+
+Many modern web developers rely heavily on heavy frameworks and ORMs. While full-featured community web frameworks (such as Gin, Echo, and Fiber) and advanced database toolchains (such as GORM and Ent) are excellent, highly refined engineering solutions that serve many large-scale projects incredibly well, GOVEMVC offers a different philosophy.
+
+By building on top of the native Standard Library (`net/http`) and official database drivers, GOVEMVC ensures:
+* **Near-Zero Overhead:** Blazing fast execution times and minimal memory footprint by bypassing massive middleware stacks and reflection-heavy abstractions.
+* **Long-Term Maintainability:** Free from third-party deprecation cycles, security vulnerabilities, or major library updates.
+* **Ultimate Transparency:** Every single line of routing, middleware, database mapping, and real-time communication is completely transparent, readable, and under your absolute control.
+
+## Reference Implementation: Real-Time Todo Manager
+
+To make starting with GOVEMVC as simple as possible, this repository contains a fully working, highly optimized reference implementation: a real-time, responsive Todo application.
+
+This reference implementation demonstrates:
+* **Native Path Routing:** Utilizing `http.NewServeMux` for robust, high-performance endpoint mapping.
+* **Official Vendor Integration:** Parameterized raw SQL queries using the official SQLite driver.
+* **Low-Level WebSocket Upgrader:** Upgrading HTTP connections to real-time TCP sockets purely through standard library features.
+* **Sleek Server-Side Rendering (SSR):** Beautiful glassmorphic UI utilizing the native `html/template` engine and vanilla CSS.
+
+## Getting Started (Docker-First Workflow)
+
+By default, GOVEMVC is designed to run entirely on top of Docker. This ensures 100% environmental consistency and eliminates any need to install Go, GCC, or SQLite tools locally on your host machine.
+
+### A Legacy of Go & Docker: Built from the Same DNA
+
+The recommendation to use a **Docker-First Workflow** in GOVEMVC is not just a convenience—it is rooted in a profound historical synergy.
+
+When Docker was first developed and released by dotCloud in 2013, it was written entirely in Golang. As one of the earliest and most disruptive cloud technologies in history, Docker served as the ultimate real-world proof of Go's capabilities. It demonstrated to the global software industry that Go could power massive, low-level, high-performance systems infrastructure with extreme reliability.
+
+Because Docker was born out of Go, running your Go-based GOVEMVC applications within Docker containerization represents an architectural match built from the exact same engineering DNA. By containerizing your Go code, you are running Go on a platform built with Go—yielding unparalleled environmental predictability, sterile compilation, and native system-level harmony.
+
+### 1. Configure the Environment
+```bash
+cp .env.example .env
+```
+
+### 2. Administer Database Migrations & Seeds on Docker
+Run database schema migrations and seed default mock records inside an isolated, lightweight Go Docker container:
+```bash
+# Run incremental SQL migrations
+docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine go run database/dbtool/main.go migrate
+
+# Populate database seeders
+docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine go run database/dbtool/main.go seed
+```
+
+### 3. Launch the Web Application
+Launch the complete container orchestration (application and persistent volumes) in detached background mode:
+```bash
+docker compose up --build -d
+```
+Visit **`http://localhost:8080`** in your web browser to access the live web application!
+
+---
+
+## Automated Testing & Validation on Docker
+
+GOVEMVC prioritizes rigorous reliability. Execute the entire testing pipeline (both isolated Unit and Integration test suites) inside a pristine, containerized environment to view interactive HTML code coverage maps:
+
+```bash
+docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine sh -c "apk add --no-cache bash gcc musl-dev && bash tests/runTests.sh"
+```
+After the runner completes, open `tests/results/coverage.html` in any web browser to view the interactive visual map highlighting exact code lines evaluated during test coverage!
+
+---
+
+## Architectural Conventions
+
+For a detailed breakdown of GOVEMVC's engineering rules, security headers, database transaction layers, and code layout guidelines, please consult:
+* **[GOVEMVC Architectural Convention (GOVEMVC.md)](file:///home/user/space/project/web/govemvc/GOVEMVC.md)**
+
+
+================================================================================
+================================================================================
+package routes
+
+import (
+	"net/http"
+
+	"govemvc/controllers"
+	"govemvc/middleware"
+)
+
+// RegisterRoutes constructs a new native ServeMux and registers all handlers.
+func RegisterRoutes() http.Handler {
+	mux := http.NewServeMux()
+
+	// Static Assets Route
+	fileServer := http.FileServer(http.Dir("views/static"))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+
+	// Application Routes (using Go 1.22+ native routing features)
+	mux.HandleFunc("GET /", controllers.IndexHandler)
+	mux.HandleFunc("POST /todos", controllers.CreateTodoHandler)
+	mux.HandleFunc("POST /todos/{id}/toggle", controllers.ToggleTodoHandler)
+	mux.HandleFunc("DELETE /todos/{id}", controllers.DeleteTodoHandler)
+
+	// WebSocket Route
+	mux.HandleFunc("GET /ws", controllers.WebSocketHandler)
+
+	// Chain and return the global middleware protection pipeline
+	return middleware.Chain(
+		mux,
+		middleware.SecurityHeaders(),
+		middleware.Logger(),
+	)
+}
+
+
+================================================================================
+================================================================================
+package integration
+
+import (
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+
+	"govemvc/controllers"
+	"govemvc/models"
+	"govemvc/websocket"
+)
+
+func TestMain(m *testing.M) {
+	// Change working directory to project root (2 levels up) so views/ can be resolved
+	if err := os.Chdir("../.."); err != nil {
+		log.Fatalf("failed to change directory to project root: %v", err)
+	}
+
+	// Start websocket active hub in a background Goroutine to prevent deadlocks on broadcasts
+	go websocket.ActiveHub.Start()
+
+	// Use official SQLite in-memory database as a mock database
+	testDBPath := ":memory:"
+	models.InitDB(testDBPath)
+
+	code := m.Run()
+
+	if models.DB != nil {
+		models.DB.Close()
+	}
+
+	os.Exit(code)
+}
+
+func TestIndexHandler(t *testing.T) {
+	req, err := http.NewRequest("GET", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(controllers.IndexHandler)
+
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "Todo List") {
+		t.Errorf("rendered body does not contain 'Todo List'")
+	}
+}
+
+func TestCreateTodoHandler(t *testing.T) {
+	data := url.Values{}
+	data.Set("title", "Integration Test Task")
+
+	req, err := http.NewRequest("POST", "/todos", strings.NewReader(data.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(controllers.CreateTodoHandler)
+
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusSeeOther {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusSeeOther)
+	}
+}
+
+
+================================================================================
+================================================================================
+#!/bin/bash
+
+# GOVEMVC Test Runner & Result Aggregator
+# Automates test execution and compiles test results/coverage reports into tests/results/
+
+set -e
+
+# Resolve directory paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Define cleanup trap to ensure files are ALWAYS restored to underscore-free camelCase
+restoreNames() {
+	mv -f "$SCRIPT_DIR/unit/todoModel_test.go" "$SCRIPT_DIR/unit/todoModelTest.go" 2>/dev/null || true
+	mv -f "$SCRIPT_DIR/integration/todoController_test.go" "$SCRIPT_DIR/integration/todoControllerTest.go" 2>/dev/null || true
+}
+trap restoreNames EXIT
+
+echo "=== GOVEMVC TEST RUNNER ==="
+echo "Project Root: $ROOT_DIR"
+echo "Cleaning old test results..."
+rm -f "$SCRIPT_DIR/results/coverage.out"
+rm -f "$SCRIPT_DIR/results/coverage.html"
+rm -f "$SCRIPT_DIR/results/testReport.log"
+
+echo "Preparing test files for Go toolchain compilation..."
+# Dynamically rename test files to follow Go compiler's strict suffix requirement
+mv "$SCRIPT_DIR/unit/todoModelTest.go" "$SCRIPT_DIR/unit/todoModel_test.go"
+mv "$SCRIPT_DIR/integration/todoControllerTest.go" "$SCRIPT_DIR/integration/todoController_test.go"
+
+echo "Running unit and integration tests..."
+# Run tests and pipe verbose output to log file
+go test -v -coverpkg=govemvc/models,govemvc/controllers,govemvc/websocket "$ROOT_DIR/tests/unit" "$ROOT_DIR/tests/integration" -coverprofile="$SCRIPT_DIR/results/coverage.out" > "$SCRIPT_DIR/results/testReport.log" 2>&1 || true
+
+# Restore names immediately after go test is finished
+restoreNames
+
+# Validate test outputs
+if grep -q "FAIL" "$SCRIPT_DIR/results/testReport.log"; then
+    echo "Some tests failed! Review details in: tests/results/testReport.log"
+    exit 1
+else
+    echo "All tests passed successfully!"
+fi
+
+echo "Generating HTML coverage report..."
+go tool cover -html="$SCRIPT_DIR/results/coverage.out" -o "$SCRIPT_DIR/results/coverage.html"
+
+echo "Reports successfully gathered under tests/results/:"
+echo "  - Log Output: tests/results/testReport.log"
+echo "  - Coverage Profile: tests/results/coverage.out"
+echo "  - HTML Coverage Map: tests/results/coverage.html"
+echo "=============================="
+
+
+================================================================================
+================================================================================
+package unit
+
+import (
+	"log"
+	"os"
+	"testing"
+
+	"govemvc/models"
+)
+
+func TestMain(m *testing.M) {
+	// Change working directory to project root (2 levels up) so views/ can be resolved
+	if err := os.Chdir("../.."); err != nil {
+		log.Fatalf("failed to change directory to project root: %v", err)
+	}
+
+	// Use official SQLite in-memory database as a mock database
+	testDBPath := ":memory:"
+	models.InitDB(testDBPath)
+
+	code := m.Run()
+
+	if models.DB != nil {
+		models.DB.Close()
+	}
+
+	os.Exit(code)
+}
+
+func TestTodoCRUD(t *testing.T) {
+	title := "Test Go Task in Unit"
+	id, err := models.CreateTodo(title)
+	if err != nil {
+		t.Fatalf("failed to create todo: %v", err)
+	}
+
+	if id <= 0 {
+		t.Errorf("expected positive ID, got %d", id)
+	}
+
+	todos, err := models.GetAllTodos()
+	if err != nil {
+		t.Fatalf("failed to get todos: %v", err)
+	}
+
+	found := false
+	for _, todo := range todos {
+		if todo.ID == id && todo.Title == title {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("created todo with id %d and title '%s' not found in database", id, title)
+	}
+
+	err = models.ToggleTodo(id, true)
+	if err != nil {
+		t.Fatalf("failed to toggle todo status: %v", err)
+	}
+
+	todos, err = models.GetAllTodos()
+	if err != nil {
+		t.Fatalf("failed to get todos after update: %v", err)
+	}
+
+	for _, todo := range todos {
+		if todo.ID == id {
+			if !todo.Completed {
+				t.Errorf("expected todo to be completed, got false")
+			}
+			break
+		}
+	}
+
+	err = models.DeleteTodo(id)
+	if err != nil {
+		t.Fatalf("failed to delete todo: %v", err)
+	}
+
+	todos, err = models.GetAllTodos()
+	if err != nil {
+		t.Fatalf("failed to get todos after deletion: %v", err)
+	}
+
+	for _, todo := range todos {
+		if todo.ID == id {
+			t.Errorf("expected todo with id %d to be deleted, but it still exists", id)
+		}
+	}
+}
+
+
+================================================================================
+================================================================================
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GOVEMVC Todo Manager</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="container header-container">
+            <h1 class="logo">GOVEMVC ⚡</h1>
+            <div class="status-indicator">
+                <span class="status-dot disconnected" id="wsStatusDot"></span>
+                <span class="status-text" id="wsStatusText">Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main container">
+        {{template "content" .}}
+    </main>
+
+    <footer class="app-footer">
+        <div class="container">
+            <p>Built with Golang Standard Library & SQLite</p>
+        </div>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}
+
+
+================================================================================
+================================================================================
+{{define "content"}}
+<div class="todo-app-card">
+    <div class="card-header">
+        <h2>Todo List</h2>
+        <p>A reactive task manager powered by native WebSockets</p>
+    </div>
+
+    <form action="/todos" method="POST" class="todo-form" id="todoForm">
+        <input type="text" name="title" id="todoTitle" placeholder="What needs to be done?" required autofocus autocomplete="off">
+        <button type="submit" class="btn-primary">Add Task</button>
+    </form>
+
+    <div class="todo-list-wrapper">
+        <ul class="todo-list" id="todoList">
+            {{range .Todos}}
+            <li class="todo-item {{if .Completed}}completed{{end}}" data-id="{{.ID}}" id="todo-{{.ID}}">
+                <label class="todo-label">
+                    <input type="checkbox" class="todo-checkbox" {{if .Completed}}checked{{end}} onchange="toggleTodo({{.ID}}, this.checked)">
+                    <span class="todo-text">{{.Title}}</span>
+                </label>
+                <button class="btn-delete" onclick="deleteTodo({{.ID}})">Delete</button>
+            </li>
+            {{else}}
+            <li class="empty-state" id="emptyState">No tasks yet. Create one above!</li>
+            {{end}}
+        </ul>
+    </div>
+</div>
+{{end}}
+
+
+================================================================================
+================================================================================
+let ws;
+const wsStatusDot = document.getElementById("wsStatusDot");
+const wsStatusText = document.getElementById("wsStatusText");
+const todoList = document.getElementById("todoList");
+const todoForm = document.getElementById("todoForm");
+const todoTitle = document.getElementById("todoTitle");
+
+// Connect to the native WebSocket server
+function connectWS() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        wsStatusDot.className = "status-dot connected";
+        wsStatusText.textContent = "Live Connected";
+    };
+
+    ws.onclose = () => {
+        wsStatusDot.className = "status-dot disconnected";
+        wsStatusText.textContent = "Disconnected (Reconnecting...)";
+        setTimeout(connectWS, 2000);
+    };
+
+    ws.onerror = (err) => {
+        console.error("websocket error:", err);
+        ws.close();
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWSMessage(data);
+    };
+}
+
+// Handle real-time updates from WebSocket broadcast
+function handleWSMessage(data) {
+    if (data.event === "create") {
+        removeEmptyState();
+        if (!document.getElementById(`todo-${data.todo.id}`)) {
+            const li = createTodoDOM(data.todo);
+            todoList.insertAdjacentHTML("afterbegin", li);
+        }
+    } else if (data.event === "toggle") {
+        const item = document.getElementById(`todo-${data.todo.id}`);
+        if (item) {
+            const checkbox = item.querySelector(".todo-checkbox");
+            checkbox.checked = data.todo.completed;
+            if (data.todo.completed) {
+                item.classList.add("completed");
+            } else {
+                item.classList.remove("completed");
+            }
+        }
+    } else if (data.event === "delete") {
+        const item = document.getElementById(`todo-${data.todo.id}`);
+        if (item) {
+            item.classList.add("deleting");
+            item.remove();
+            checkEmptyState();
+        }
+    }
+}
+
+// Generate Todo item HTML
+function createTodoDOM(todo) {
+    return `
+        <li class="todo-item ${todo.completed ? 'completed' : ''}" data-id="${todo.id}" id="todo-${todo.id}">
+            <label class="todo-label">
+                <input type="checkbox" class="todo-checkbox" ${todo.completed ? 'checked' : ''} onchange="toggleTodo(${todo.id}, this.checked)">
+                <span class="todo-text">${escapeHTML(todo.title)}</span>
+            </label>
+            <button class="btn-delete" onclick="deleteTodo(${todo.id})">Delete</button>
+        </li>
+    `;
+}
+
+// Helper to escape HTML tags to prevent client-side XSS
+function escapeHTML(str) {
+    return str.replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+    );
+}
+
+function removeEmptyState() {
+    const empty = document.getElementById("emptyState");
+    if (empty) {
+        empty.remove();
+    }
+}
+
+function checkEmptyState() {
+    if (todoList.children.length === 0) {
+        todoList.innerHTML = `<li class="empty-state" id="emptyState">No tasks yet. Create one above!</li>`;
+    }
+}
+
+// Asynchronously toggle todo status via API
+async function toggleTodo(id, completed) {
+    try {
+        const response = await fetch(`/todos/${id}/toggle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ completed })
+        });
+        if (!response.ok) {
+            console.error("failed to toggle todo status");
+        }
+    } catch (err) {
+        console.error("network error toggling status:", err);
+    }
+}
+
+// Asynchronously delete todo via API
+async function deleteTodo(id) {
+    try {
+        const response = await fetch(`/todos/${id}`, {
+            method: "DELETE"
+        });
+        if (!response.ok) {
+            console.error("failed to delete todo");
+        }
+    } catch (err) {
+        console.error("network error deleting todo:", err);
+    }
+}
+
+// Intercept form submission to add new task asynchronously
+if (todoForm) {
+    todoForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const title = todoTitle.value.trim();
+        if (!title) return;
+
+        try {
+            const formData = new FormData();
+            formData.append("title", title);
+
+            const response = await fetch("/todos", {
+                method: "POST",
+                body: formData
+            });
+
+            if (response.ok) {
+                todoTitle.value = "";
+                todoTitle.focus();
+            } else {
+                console.error("failed to create todo");
+            }
+        } catch (err) {
+            console.error("network error creating todo:", err);
+        }
+    };
+}
+
+// Initialize connection
+connectWS();
+
+
+================================================================================
+================================================================================
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+    --bg-dark: #09090b;
+    --bg-card: rgba(20, 20, 23, 0.65);
+    --bg-input: #18181b;
+    --primary-grad: linear-gradient(135deg, #ffffff 0%, #a1a1aa 100%);
+    --danger-grad: linear-gradient(135deg, #27272a 0%, #52525b 100%);
+    --text-main: #fafafa;
+    --text-muted: #71717a;
+    --accent: #ffffff;
+    --border-color: rgba(255, 255, 255, 0.08);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background-color: var(--bg-dark);
+    background-image: 
+        radial-gradient(at 10% 20%, rgba(255, 255, 255, 0.02) 0px, transparent 50%),
+        radial-gradient(at 90% 80%, rgba(255, 255, 255, 0.02) 0px, transparent 50%);
+    color: var(--text-main);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+}
+
+.container {
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+}
+
+/* Header */
+.app-header {
+    background-color: rgba(10, 14, 23, 0.8);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    padding: 1rem 0;
+}
+
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-size: 1.5rem;
+    font-weight: 700;
+    background: var(--primary-grad);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.5px;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    padding: 0.4rem 0.8rem;
+    border-radius: 50px;
+    border: 1px solid var(--border-color);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    transition: all 0.3s ease;
+}
+
+.status-dot.connected {
+    background-color: #fafafa;
+    box-shadow: 0 0 8px #fafafa;
+    animation: pulse 1.8s infinite;
+}
+
+.status-dot.disconnected {
+    background-color: #27272a;
+    box-shadow: 0 0 8px #27272a;
+}
+
+.status-text {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.3); opacity: 0.6; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Main */
+.app-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1.5rem;
+}
+
+/* Card */
+.todo-app-card {
+    width: 100%;
+    background: var(--bg-card);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    padding: 2.5rem;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.todo-app-card:hover {
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(255, 255, 255, 0.01);
+}
+
+.card-header {
+    margin-bottom: 2rem;
+}
+
+.card-header h2 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    letter-spacing: -0.5px;
+}
+
+.card-header p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+
+/* Form */
+.todo-form {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+}
+
+.todo-form input {
+    flex: 1;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 0.9rem 1.2rem;
+    color: var(--text-main);
+    font-size: 0.95rem;
+    outline: none;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+.todo-form input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.08);
+}
+
+.btn-primary {
+    background: var(--primary-grad);
+    border: none;
+    color: #030712;
+    font-weight: 600;
+    padding: 0.9rem 1.8rem;
+    border-radius: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 15px rgba(255, 255, 255, 0.05);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 255, 255, 0.1);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+/* Todo List */
+.todo-list-wrapper {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.todo-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.todo-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1rem 1.2rem;
+    transition: all 0.2s ease;
+    animation: slideIn 0.3s ease forwards;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.todo-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateX(2px);
+}
+
+.todo-label {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    cursor: pointer;
+    flex: 1;
+}
+
+.todo-checkbox {
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--text-muted);
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+    display: grid;
+    place-content: center;
+    transition: all 0.2s ease;
+}
+
+.todo-checkbox::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    transform: scale(0);
+    transition: 120ms transform ease-in-out;
+    box-shadow: inset 1em 1em #030712;
+    background-color: #030712;
+    clip-path: polygon(14% 44%, 0 58%, 38% 96%, 100% 21%, 86% 7%, 38% 68%);
+}
+
+.todo-checkbox:checked {
+    background: var(--primary-grad);
+    border-color: transparent;
+}
+
+.todo-checkbox:checked::before {
+    transform: scale(1);
+}
+
+.todo-text {
+    font-size: 1rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.todo-item.completed .todo-text {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+.btn-delete {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #a1a1aa;
+    font-weight: 500;
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+}
+
+.btn-delete:hover {
+    background: var(--danger-grad);
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow: 0 4px 10px rgba(255, 255, 255, 0.05);
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 2.5rem 0;
+    font-size: 0.95rem;
+}
+
+/* Footer */
+.app-footer {
+    border-top: 1px solid var(--border-color);
+    padding: 1.5rem 0;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+
+================================================================================
+================================================================================
+package websocket
+
+import (
+	"crypto/sha1"
+	"encoding/base64"
+	"fmt"
+	"net"
+	"net/http"
+	"sync"
+)
+
+// Client represents a connected websocket client.
+type Client struct {
+	Conn net.Conn
+	Send chan []byte
+}
+
+// Hub manages active connections and broadcasts.
+type Hub struct {
+	Clients    map[*Client]bool
+	Broadcast  chan []byte
+	Register   chan *Client
+	Unregister chan *Client
+	mu         sync.RWMutex
+}
+
+// ActiveHub is the global real-time coordinator.
+var ActiveHub = &Hub{
+	Clients:    make(map[*Client]bool),
+	Broadcast:  make(chan []byte),
+	Register:   make(chan *Client),
+	Unregister: make(chan *Client),
+}
+
+// Start runs the hub communication loops.
+func (h *Hub) Start() {
+	for {
+		select {
+		case client := <-h.Register:
+			h.mu.Lock()
+			h.Clients[client] = true
+			h.mu.Unlock()
+		case client := <-h.Unregister:
+			h.mu.Lock()
+			if _, ok := h.Clients[client]; ok {
+				delete(h.Clients, client)
+				close(client.Send)
+			}
+			h.mu.Unlock()
+		case message := <-h.Broadcast:
+			h.mu.RLock()
+			for client := range h.Clients {
+				select {
+				case client.Send <- message:
+				default:
+					h.mu.RUnlock()
+					h.mu.Lock()
+					delete(h.Clients, client)
+					close(client.Send)
+					h.mu.Unlock()
+					h.mu.RLock()
+				}
+			}
+			h.mu.RUnlock()
+		}
+	}
+}
+
+// Upgrade upgrades the HTTP connection to WebSocket manually using http.Hijacker.
+func Upgrade(w http.ResponseWriter, r *http.Request) (net.Conn, error) {
+	if r.Header.Get("Upgrade") != "websocket" {
+		return nil, fmt.Errorf("invalid upgrade header")
+	}
+
+	key := r.Header.Get("Sec-WebSocket-Key")
+	if key == "" {
+		return nil, fmt.Errorf("missing Sec-WebSocket-Key")
+	}
+
+	guid := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	h := sha1.New()
+	h.Write([]byte(key + guid))
+	acceptKey := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return nil, fmt.Errorf("webserver does not support hijacking")
+	}
+
+	conn, bufrw, err := hijacker.Hijack()
+	if err != nil {
+		return nil, fmt.Errorf("failed to hijack connection: %w", err)
+	}
+
+	response := fmt.Sprintf(
+		"HTTP/1.1 101 Switching Protocols\r\n"+
+			"Upgrade: websocket\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Sec-WebSocket-Accept: %s\r\n\r\n",
+		acceptKey,
+	)
+
+	_, err = bufrw.WriteString(response)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to write handshake response: %w", err)
+	}
+	bufrw.Flush()
+
+	return conn, nil
+}
+
+// WriteFrame formats and writes a text frame to the connection.
+func WriteFrame(conn net.Conn, payload []byte) error {
+	length := len(payload)
+	var header []byte
+
+	header = append(header, 0x81)
+
+	if length <= 125 {
+		header = append(header, byte(length))
+	} else if length <= 65535 {
+		header = append(header, 126)
+		header = append(header, byte(length>>8))
+		header = append(header, byte(length&0xFF))
+	} else {
+		header = append(header, 127)
+		for i := 7; i >= 0; i-- {
+			header = append(header, byte(length>>(i*8)))
+		}
+	}
+
+	if _, err := conn.Write(append(header, payload...)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReadLoop reads from connection to detect close frames and discard data.
+func (c *Client) ReadLoop() {
+	defer func() {
+		ActiveHub.Unregister <- c
+		c.Conn.Close()
+	}()
+
+	buf := make([]byte, 1024)
+	for {
+		n, err := c.Conn.Read(buf)
+		if err != nil {
+			break
+		}
+
+		if n > 0 {
+			opcode := buf[0] & 0x0F
+			if opcode == 8 {
+				break
+			}
+		}
+	}
+}
+
+// WriteLoop writes messages to the client connection.
+func (c *Client) WriteLoop() {
+	defer func() {
+		c.Conn.Close()
+	}()
+
+	for msg := range c.Send {
+		if err := WriteFrame(c.Conn, msg); err != nil {
+			break
+		}
+	}
+}
+
+
