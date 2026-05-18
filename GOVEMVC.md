@@ -144,35 +144,65 @@ To maintain clean, uniform, and maintainable code across the entire architecture
 
 ## 4. Security Standards & Vulnerability Prevention
 
-GOVEMVC places premium importance on defensive coding. Relying on raw implementations means safety patterns must be applied explicitly at the application layer:
+GOVEMVC places premium importance on defensive coding. When building applications without heavy external frameworks, security controls must be explicitly implemented at the application layer using only Go's robust **Standard Library** and official Go-vetted sub-repositories (such as `golang.org/x/crypto`).
 
 ### A. SQL Injection Prevention
 
-* **Rule:** Concatenating user-supplied string inputs into raw SQL query statements is strictly banned.
-* **Rule:** All database actions executed via `database/sql` must employ parameterized placeholder arguments (e.g., `$1`, `$2` in PostgreSQL or `?` in SQLite).
+* **Rule:** Concatenating user-supplied string inputs or request parameters directly into raw SQL query strings is strictly prohibited.
+* **Rule:** All database actions executed via standard `database/sql` must employ parameterized placeholder arguments (e.g., `?` in SQLite/MySQL, or `$1`, `$2` in PostgreSQL).
+* **Rule:** Direct execution of raw dynamic queries is only permitted for compile-time constants. Any execution involving runtime inputs must use prepared statements or placeholder parameters.
   ```go
-  // SECURE IMPLEMENTATION
-  db.QueryRow("SELECT id, password_hash FROM users WHERE email = $1", email)
+  // SECURE IMPLEMENTATION (SQLite)
+  db.QueryRow("SELECT id, title, completed FROM todos WHERE id = ? AND user_id = ?", todoID, userID)
   ```
 
 ### B. Cross-Site Scripting (XSS) Mitigation
 
-* **Rule:** Rendering untrusted user input directly onto the document context is forbidden.
-* **Rule:** Output generation must rely on `html/template`. The built-in template engine automatically enforces context-aware data escaping (HTML, JavaScript, CSS attributes) based on where the variable is positioned inside the template text.
-* **Rule:** If raw data output is explicitly demanded, it must pass through rigorous sanitizer functions before validation.
+* **Rule:** Rendering untrusted user input directly onto the document context without sanitization or dynamic escaping is strictly forbidden.
+* **Rule:** Output generation must rely entirely on Go's native `html/template` package. The built-in template engine automatically enforces context-aware data escaping (HTML, JavaScript, CSS attributes, and URIs) based on the variable's position inside the template text.
+* **Rule:** Strict browser protection must be enforced by injecting a comprehensive **Content-Security-Policy (CSP)** header globally via middleware (e.g., restricting script execution to `'self'`, disabling `'unsafe-inline'` where possible, or employing cryptographically secure nonces).
 
-### C. WebSocket Resource Safety & DoS Prevention
+### C. Cross-Site Request Forgery (CSRF) Prevention
 
-* **Rule:** Connections initiated without origin validations must be blocked. The HTTP Handler in charge of protocol upgrading must explicitly evaluate the `Origin` header against an authorized domain whitelist.
-* **Rule:** To avoid Denial of Service (DoS) attacks and buffer manipulation vulnerabilities, incoming packet sizes must be capped. Network read and write deadlines must be declared dynamically per socket connection using native net.Conn methods (`SetReadDeadline`, `SetWriteDeadline`).
-* **Rule:** To prevent fatal memory leakage (Goroutine Leaks), connection cancellation signals, connection closed events, or network timeouts must trigger proper return executions that close channels and cleanly destroy old connection loops.
+* **Rule:** State-changing requests (POST, PUT, DELETE, PATCH) must be protected against CSRF attacks.
+* **Rule:** The application must enforce a **Double-Submit Cookie Pattern** or secure token validation. Every dynamic form rendering must inject a unique, high-entropy CSRF token generated using cryptographically secure random numbers from the `crypto/rand` package (never use `math/rand`).
+* **Rule:** Every mutating HTTP request must validate that the incoming token in the request header or form parameter matches the token stored inside a secure CSRF cookie.
+* **Rule:** CSRF cookies must strictly declare the `HttpOnly` (preventing JS access), `Secure` (restricting transmission to HTTPS), and `SameSite=Strict` (barring cross-site requests) attributes.
 
-### D. Centralized Middleware Control
+### D. Cryptographic and Password Hashing Standards
 
-* **Rule:** Global protection policies must be isolated inside the `/middleware` pipeline to ensure security policies cannot be bypassed by specific controller routes.
-* **Rule:** Fundamental security tasks—such as CORS rules validation, Authorization checks (JWT/Session processing), Logging, Rate Limiting, and injecting essential protection headers (like `X-Frame-Options` and `Content-Security-Policy`)—must be intercepted and processed globally inside sequential HTTP middleware chains before handing execution down to target controllers.
+* **Rule:** Passwords must never be stored as plaintext, MD5, SHA-1, or plain SHA-256 digests.
+* **Rule:** Password hashing must rely exclusively on the official Go vendor cryptography package: **`golang.org/x/crypto/bcrypt`**.
+* **Rule:** The work factor (Cost parameter) for Bcrypt must be explicitly configured to a minimum of **12** (or higher depending on server hardware) to defend against GPU-accelerated offline brute-force attacks.
+* **Rule:** Symmetric data encryption must use **AES-GCM** (Galois/Counter Mode) via `crypto/aes` and `crypto/cipher` standard library packages, utilizing a unique 12-byte initialization vector (IV) generated via `crypto/rand` for every single encryption cycle.
+* **Rule:** Legacy cryptographic hashes like MD5 or SHA-1 are strictly banned for data hashing, integrity checks, or passwords due to collision vulnerabilities (SHA-1 is only accepted during the native WebSocket protocol upgrade handshake, as explicitly mandated by RFC 6455).
+
+### E. Secure Session Management
+
+* **Rule:** Session identifiers (Session IDs) must be generated using cryptographically secure random bytes from `crypto/rand` with at least **32 bytes** (256 bits) of entropy, encoded using standard `encoding/hex` or `encoding/base64`.
+* **Rule:** Session cookies must always have the `HttpOnly`, `Secure` (in production), and `SameSite=Lax` or `SameSite=Strict` attributes declared.
+* **Rule:** Session tokens must be validated against a server-side storage map or database record during every request. Sessions must have a clear expiration limit (Session Timeout) and must be completely destroyed from server memory and database storage upon explicit user logout.
+
+### F. WebSocket Resource Safety & DoS Prevention
+
+* **Rule:** WebSocket upgrades must be authenticated beforehand. The HTTP handler upgrading the protocol must verify the active session cookie or auth token present in the initial HTTP upgrade request before invoking the `http.Hijacker` interface.
+* **Rule:** Handlers must explicitly evaluate the `Origin` header of the incoming upgrade request against an authorized domain whitelist to prevent Cross-Site WebSocket Hijacking (CSWSH) attacks.
+* **Rule:** To prevent Denial of Service (DoS) and memory exhaustion, incoming packet sizes must be strictly capped (e.g., maximum read limit of 1024 to 4096 bytes).
+* **Rule:** Network read and write deadlines must be declared dynamically per connection using the underlying net.Conn methods (`SetReadDeadline`, `SetWriteDeadline`) to automatically sever hung or slow-loris connections.
+* **Rule:** Goroutine Leaks must be strictly prevented. When a connection severs, is closed by the client, or hits a deadline timeout, the WebSocket hub must cleanly close channels, remove the client from active mappings, and terminate the connection's background Goroutine loops.
+
+### G. Centralized Middleware Control & Rate Limiting
+
+* **Rule:** Global security policies must be isolated inside the `/middleware` pipeline to guarantee that individual controller handlers cannot accidentally bypass security controls.
+* **Rule:** Core security headers must be injected into every HTTP response:
+  * `X-Frame-Options: DENY` (prevents clickjacking).
+  * `X-Content-Type-Options: nosniff` (prevents MIME-sniffing).
+  * `Referrer-Policy: strict-origin-when-cross-origin` (protects referrer data).
+  * `Content-Security-Policy` (mitigates XSS).
+* **Rule:** To prevent brute-force attacks and application-layer DoS, active **Rate Limiting** must be enforced globally or on sensitive routes (e.g., login, password reset). Rate limiting must be implemented natively using Go standard library primitives—such as a thread-safe `sync.Map` tracking client IPs and custom token-bucket or sliding-window algorithms driven by standard `time.Ticker` clocks.
 
 ---
+
 
 ## 5. GOVEMVC Architecture Benefits
 
