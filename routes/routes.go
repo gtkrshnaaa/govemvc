@@ -1,0 +1,33 @@
+package routes
+
+import (
+	"net/http"
+
+	"govemvc/controllers"
+	"govemvc/middleware"
+)
+
+// RegisterRoutes constructs a new native ServeMux and registers all handlers.
+func RegisterRoutes() http.Handler {
+	mux := http.NewServeMux()
+
+	// Static Assets Route
+	fileServer := http.FileServer(http.Dir("views/static"))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+
+	// Application Routes (using Go 1.22+ native routing features)
+	mux.HandleFunc("GET /", controllers.IndexHandler)
+	mux.HandleFunc("POST /todos", controllers.CreateTodoHandler)
+	mux.HandleFunc("POST /todos/{id}/toggle", controllers.ToggleTodoHandler)
+	mux.HandleFunc("DELETE /todos/{id}", controllers.DeleteTodoHandler)
+
+	// WebSocket Route
+	mux.HandleFunc("GET /ws", controllers.WebSocketHandler)
+
+	// Chain and return the global middleware protection pipeline
+	return middleware.Chain(
+		mux,
+		middleware.SecurityHeaders(),
+		middleware.Logger(),
+	)
+}
