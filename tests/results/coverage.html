@@ -1,0 +1,561 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>controllers: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">govemvc/controllers/todo.go (21.7%)</option>
+				
+				<option value="file1">govemvc/models/db.go (70.0%)</option>
+				
+				<option value="file2">govemvc/models/todo.go (78.8%)</option>
+				
+				<option value="file3">govemvc/websocket/hub.go (6.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package controllers
+
+import (
+        "encoding/json"
+        "html/template"
+        "net/http"
+        "strconv"
+
+        "govemvc/models"
+        "govemvc/websocket"
+)
+
+// IndexHandler renders the main dashboard page with all todo items.
+func IndexHandler(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if r.URL.Path != "/" </span><span class="cov0" title="0">{
+                http.NotFound(w, r)
+                return
+        }</span>
+
+        <span class="cov8" title="1">todos, err := models.GetAllTodos()
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, err.Error(), http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov8" title="1">tmpl, err := template.ParseFiles("views/layouts/base.html", "views/pages/index.html")
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, err.Error(), http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov8" title="1">data := map[string]interface{}{
+                "Todos": todos,
+        }
+
+        if err := tmpl.ExecuteTemplate(w, "base", data); err != nil </span><span class="cov0" title="0">{
+                http.Error(w, err.Error(), http.StatusInternalServerError)
+                return
+        }</span>
+}
+
+// CreateTodoHandler processes a POST request to add a new todo.
+func CreateTodoHandler(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if r.Method != http.MethodPost </span><span class="cov0" title="0">{
+                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        <span class="cov8" title="1">title := r.FormValue("title")
+        if title == "" </span><span class="cov0" title="0">{
+                http.Error(w, "title is required", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">id, err := models.CreateTodo(title)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, err.Error(), http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov8" title="1">updateMsg, _ := json.Marshal(map[string]interface{}{
+                "event": "create",
+                "todo": map[string]interface{}{
+                        "id":        id,
+                        "title":     title,
+                        "completed": false,
+                },
+        })
+        websocket.ActiveHub.Broadcast &lt;- updateMsg
+
+        http.Redirect(w, r, "/", http.StatusSeeOther)</span>
+}
+
+// ToggleTodoHandler toggles a todo's completed status.
+func ToggleTodoHandler(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        if r.Method != http.MethodPost </span><span class="cov0" title="0">{
+                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        <span class="cov0" title="0">idStr := r.PathValue("id")
+        id, err := strconv.ParseInt(idStr, 10, 64)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "invalid id", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov0" title="0">var reqBody struct {
+                Completed bool `json:"completed"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&amp;reqBody); err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "invalid body", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov0" title="0">if err := models.ToggleTodo(id, reqBody.Completed); err != nil </span><span class="cov0" title="0">{
+                http.Error(w, err.Error(), http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov0" title="0">updateMsg, _ := json.Marshal(map[string]interface{}{
+                "event": "toggle",
+                "todo": map[string]interface{}{
+                        "id":        id,
+                        "completed": reqBody.Completed,
+                },
+        })
+        websocket.ActiveHub.Broadcast &lt;- updateMsg
+
+        w.WriteHeader(http.StatusOK)</span>
+}
+
+// DeleteTodoHandler deletes a todo item.
+func DeleteTodoHandler(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        if r.Method != http.MethodDelete </span><span class="cov0" title="0">{
+                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        <span class="cov0" title="0">idStr := r.PathValue("id")
+        id, err := strconv.ParseInt(idStr, 10, 64)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "invalid id", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov0" title="0">if err := models.DeleteTodo(id); err != nil </span><span class="cov0" title="0">{
+                http.Error(w, err.Error(), http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov0" title="0">updateMsg, _ := json.Marshal(map[string]interface{}{
+                "event": "delete",
+                "todo": map[string]interface{}{
+                        "id": id,
+                },
+        })
+        websocket.ActiveHub.Broadcast &lt;- updateMsg
+
+        w.WriteHeader(http.StatusOK)</span>
+}
+
+// WebSocketHandler upgrades and establishes the real-time websocket connection.
+func WebSocketHandler(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        conn, err := websocket.Upgrade(w, r)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "failed to upgrade: "+err.Error(), http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov0" title="0">client := &amp;websocket.Client{
+                Conn: conn,
+                Send: make(chan []byte, 256),
+        }
+
+        websocket.ActiveHub.Register &lt;- client
+
+        go client.WriteLoop()
+        go client.ReadLoop()</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package models
+
+import (
+        "database/sql"
+        "log"
+
+        _ "github.com/mattn/go-sqlite3"
+)
+
+var DB *sql.DB
+
+// InitDB opens a connection to the SQLite database and runs migrations.
+func InitDB(dataSourceName string) <span class="cov8" title="1">{
+        var err error
+        DB, err = sql.Open("sqlite3", dataSourceName)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("failed to open database: %v", err)
+        }</span>
+
+        <span class="cov8" title="1">if err = DB.Ping(); err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("failed to ping database: %v", err)
+        }</span>
+
+        <span class="cov8" title="1">schema := `
+        CREATE TABLE IF NOT EXISTS todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0
+        );`
+
+        _, err = DB.Exec(schema)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("failed to run database migrations: %v", err)
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package models
+
+import (
+        "fmt"
+)
+
+// Todo represents a task item in the database.
+type Todo struct {
+        ID        int64  `json:"id"`
+        Title     string `json:"title"`
+        Completed bool   `json:"completed"`
+}
+
+// GetAllTodos retrieves all todo items from the database.
+func GetAllTodos() ([]Todo, error) <span class="cov8" title="1">{
+        rows, err := DB.Query("SELECT id, title, completed FROM todos ORDER BY id DESC")
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query todos: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer rows.Close()
+
+        var todos []Todo
+        for rows.Next() </span><span class="cov8" title="1">{
+                var t Todo
+                var compVal int
+                if err := rows.Scan(&amp;t.ID, &amp;t.Title, &amp;compVal); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan todo row: %w", err)
+                }</span>
+                <span class="cov8" title="1">t.Completed = compVal == 1
+                todos = append(todos, t)</span>
+        }
+
+        <span class="cov8" title="1">if err = rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("row iteration error: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return todos, nil</span>
+}
+
+// CreateTodo inserts a new todo item into the database.
+func CreateTodo(title string) (int64, error) <span class="cov8" title="1">{
+        result, err := DB.Exec("INSERT INTO todos (title, completed) VALUES (?, 0)", title)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("failed to insert todo: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">id, err := result.LastInsertId()
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("failed to get last inserted id: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return id, nil</span>
+}
+
+// ToggleTodo updates the completion status of a todo item.
+func ToggleTodo(id int64, completed bool) error <span class="cov8" title="1">{
+        compVal := 0
+        if completed </span><span class="cov8" title="1">{
+                compVal = 1
+        }</span>
+
+        <span class="cov8" title="1">_, err := DB.Exec("UPDATE todos SET completed = ? WHERE id = ?", compVal, id)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to update todo: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// DeleteTodo removes a todo item from the database.
+func DeleteTodo(id int64) error <span class="cov8" title="1">{
+        _, err := DB.Exec("DELETE FROM todos WHERE id = ?", id)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to delete todo: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package websocket
+
+import (
+        "crypto/sha1"
+        "encoding/base64"
+        "fmt"
+        "net"
+        "net/http"
+        "sync"
+)
+
+// Client represents a connected websocket client.
+type Client struct {
+        Conn net.Conn
+        Send chan []byte
+}
+
+// Hub manages active connections and broadcasts.
+type Hub struct {
+        Clients    map[*Client]bool
+        Broadcast  chan []byte
+        Register   chan *Client
+        Unregister chan *Client
+        mu         sync.RWMutex
+}
+
+// ActiveHub is the global real-time coordinator.
+var ActiveHub = &amp;Hub{
+        Clients:    make(map[*Client]bool),
+        Broadcast:  make(chan []byte),
+        Register:   make(chan *Client),
+        Unregister: make(chan *Client),
+}
+
+// Start runs the hub communication loops.
+func (h *Hub) Start() <span class="cov8" title="1">{
+        for </span><span class="cov8" title="1">{
+                select </span>{
+                case client := &lt;-h.Register:<span class="cov0" title="0">
+                        h.mu.Lock()
+                        h.Clients[client] = true
+                        h.mu.Unlock()</span>
+                case client := &lt;-h.Unregister:<span class="cov0" title="0">
+                        h.mu.Lock()
+                        if _, ok := h.Clients[client]; ok </span><span class="cov0" title="0">{
+                                delete(h.Clients, client)
+                                close(client.Send)
+                        }</span>
+                        <span class="cov0" title="0">h.mu.Unlock()</span>
+                case message := &lt;-h.Broadcast:<span class="cov8" title="1">
+                        h.mu.RLock()
+                        for client := range h.Clients </span><span class="cov0" title="0">{
+                                select </span>{
+                                case client.Send &lt;- message:<span class="cov0" title="0"></span>
+                                default:<span class="cov0" title="0">
+                                        h.mu.RUnlock()
+                                        h.mu.Lock()
+                                        delete(h.Clients, client)
+                                        close(client.Send)
+                                        h.mu.Unlock()
+                                        h.mu.RLock()</span>
+                                }
+                        }
+                        <span class="cov8" title="1">h.mu.RUnlock()</span>
+                }
+        }
+}
+
+// Upgrade upgrades the HTTP connection to WebSocket manually using http.Hijacker.
+func Upgrade(w http.ResponseWriter, r *http.Request) (net.Conn, error) <span class="cov0" title="0">{
+        if r.Header.Get("Upgrade") != "websocket" </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid upgrade header")
+        }</span>
+
+        <span class="cov0" title="0">key := r.Header.Get("Sec-WebSocket-Key")
+        if key == "" </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("missing Sec-WebSocket-Key")
+        }</span>
+
+        <span class="cov0" title="0">guid := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        h := sha1.New()
+        h.Write([]byte(key + guid))
+        acceptKey := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+        hijacker, ok := w.(http.Hijacker)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("webserver does not support hijacking")
+        }</span>
+
+        <span class="cov0" title="0">conn, bufrw, err := hijacker.Hijack()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to hijack connection: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">response := fmt.Sprintf(
+                "HTTP/1.1 101 Switching Protocols\r\n"+
+                        "Upgrade: websocket\r\n"+
+                        "Connection: Upgrade\r\n"+
+                        "Sec-WebSocket-Accept: %s\r\n\r\n",
+                acceptKey,
+        )
+
+        _, err = bufrw.WriteString(response)
+        if err != nil </span><span class="cov0" title="0">{
+                conn.Close()
+                return nil, fmt.Errorf("failed to write handshake response: %w", err)
+        }</span>
+        <span class="cov0" title="0">bufrw.Flush()
+
+        return conn, nil</span>
+}
+
+// WriteFrame formats and writes a text frame to the connection.
+func WriteFrame(conn net.Conn, payload []byte) error <span class="cov0" title="0">{
+        length := len(payload)
+        var header []byte
+
+        header = append(header, 0x81)
+
+        if length &lt;= 125 </span><span class="cov0" title="0">{
+                header = append(header, byte(length))
+        }</span> else<span class="cov0" title="0"> if length &lt;= 65535 </span><span class="cov0" title="0">{
+                header = append(header, 126)
+                header = append(header, byte(length&gt;&gt;8))
+                header = append(header, byte(length&amp;0xFF))
+        }</span> else<span class="cov0" title="0"> {
+                header = append(header, 127)
+                for i := 7; i &gt;= 0; i-- </span><span class="cov0" title="0">{
+                        header = append(header, byte(length&gt;&gt;(i*8)))
+                }</span>
+        }
+
+        <span class="cov0" title="0">if _, err := conn.Write(append(header, payload...)); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov0" title="0">return nil</span>
+}
+
+// ReadLoop reads from connection to detect close frames and discard data.
+func (c *Client) ReadLoop() <span class="cov0" title="0">{
+        defer func() </span><span class="cov0" title="0">{
+                ActiveHub.Unregister &lt;- c
+                c.Conn.Close()
+        }</span>()
+
+        <span class="cov0" title="0">buf := make([]byte, 1024)
+        for </span><span class="cov0" title="0">{
+                n, err := c.Conn.Read(buf)
+                if err != nil </span><span class="cov0" title="0">{
+                        break</span>
+                }
+
+                <span class="cov0" title="0">if n &gt; 0 </span><span class="cov0" title="0">{
+                        opcode := buf[0] &amp; 0x0F
+                        if opcode == 8 </span><span class="cov0" title="0">{
+                                break</span>
+                        }
+                }
+        }
+}
+
+// WriteLoop writes messages to the client connection.
+func (c *Client) WriteLoop() <span class="cov0" title="0">{
+        defer func() </span><span class="cov0" title="0">{
+                c.Conn.Close()
+        }</span>()
+
+        <span class="cov0" title="0">for msg := range c.Send </span><span class="cov0" title="0">{
+                if err := WriteFrame(c.Conn, msg); err != nil </span><span class="cov0" title="0">{
+                        break</span>
+                }
+        }
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
