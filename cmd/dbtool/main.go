@@ -26,7 +26,7 @@ func main() {
 
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "govemvc.db"
+		dbPath = "database/govemvc.db"
 	}
 
 	db, err := sql.Open("sqlite3", dbPath)
