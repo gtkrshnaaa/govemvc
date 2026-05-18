@@ -2,7 +2,7 @@
 --- PASS: TestTodoCRUD (0.00s)
 PASS
 coverage: 76.7% of statements in govemvc/models, govemvc/controllers, govemvc/websocket
-ok  	govemvc/tests/unit	0.002s	coverage: 76.7% of statements in govemvc/models, govemvc/controllers, govemvc/websocket
+ok  	govemvc/tests/unit	0.003s	coverage: 76.7% of statements in govemvc/models, govemvc/controllers, govemvc/websocket
 === RUN   TestIndexHandler
 --- PASS: TestIndexHandler (0.00s)
 === RUN   TestCreateTodoHandler

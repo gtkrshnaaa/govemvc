@@ -1,0 +1,85 @@
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+
+	"govemvc/database/seeders"
+	"govemvc/models"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+func main() {
+	flag.Parse()
+	args := flag.Args()
+
+	if len(args) < 1 {
+		fmt.Println("Usage: go run database/dbtool/main.go [migrate|seed|reset]")
+		os.Exit(1)
+	}
+
+	command := args[0]
+
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "database/govemvc.db"
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	models.DB = db
+
+	switch command {
+	case "migrate":
+		runMigrations(db)
+	case "seed":
+		runSeeders()
+	case "reset":
+		runReset(db)
+	default:
+		fmt.Printf("unknown command: %s\n", command)
+		os.Exit(1)
+	}
+}
+
+func runMigrations(db *sql.DB) {
+	log.Println("running database migrations...")
+	schema := `
+	CREATE TABLE IF NOT EXISTS todos (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		title TEXT NOT NULL,
+		completed INTEGER NOT NULL DEFAULT 0
+	);`
+
+	_, err := db.Exec(schema)
+	if err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
+	log.Println("migrations completed successfully.")
+}
+
+func runSeeders() {
+	log.Println("running database seeders...")
+	err := seeders.SeedTodos()
+	if err != nil {
+		log.Fatalf("failed to seed database: %v", err)
+	}
+	log.Println("seeding completed successfully.")
+}
+
+func runReset(db *sql.DB) {
+	log.Println("resetting database...")
+	_, err := db.Exec("DROP TABLE IF EXISTS todos;")
+	if err != nil {
+		log.Fatalf("failed to reset database: %v", err)
+	}
+	log.Println("database reset completed.")
+}
