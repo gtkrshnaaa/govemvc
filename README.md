@@ -4,7 +4,7 @@ Welcome to the official reference implementation of the **GOVEMVC** (Go Vendor &
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Zero-Framework Routing:** Utilizes Go's native, highly optimized `http.NewServeMux()` with advanced wildcard path routing features.
 * **Vendor-Driven Data Layer:** Strict implementation of standard `database/sql` with raw parameterized SQL queries using the official SQLite driver (`github.com/mattn/go-sqlite3`).
@@ -17,7 +17,7 @@ Welcome to the official reference implementation of the **GOVEMVC** (Go Vendor &
 
 ---
 
-## 📁 Real Directory Structure
+## Real Directory Structure
 
 Below is the directory hierarchy implemented in this reference Todo application:
 
@@ -72,7 +72,7 @@ Below is the directory hierarchy implemented in this reference Todo application:
 
 ---
 
-## 🛠️ Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -109,7 +109,7 @@ Open your browser and navigate to **`http://localhost:8080`** to experience the 
 
 ---
 
-## 🎛️ Database CLI Tool (`dbtool`) Reference
+## Database CLI Tool (`dbtool`) Reference
 
 A lightweight command-line database manager is located at `/cmd/dbtool`. It supports the following management commands:
 
@@ -122,7 +122,7 @@ A lightweight command-line database manager is located at `/cmd/dbtool`. It supp
 
 ---
 
-## 🧪 Automated Testing & Interactive Reports
+## Automated Testing & Interactive Reports
 
 All tests run in completely isolated environments using offical SQLite in-memory `:memory:` databases as mock engines, keeping the filesystem pristine.
 
@@ -139,7 +139,7 @@ After the runner completes, review the gathered artifacts under `tests/results/`
 
 ---
 
-## 🐳 Docker Deployment
+## Docker Deployment
 
 The application features an ultra-small deployment blueprint utilizing a multi-stage Docker build to keep images lightweight and sterile.
 
@@ -151,7 +151,7 @@ docker-compose up --build -d
 
 ---
 
-## 📘 Architectural Convention Specification
+## Architectural Convention Specification
 
 To read the absolute rules, defensive programming guidelines, WebSocket upgrading, and security standards mandated by this architectural design, consult the official convention document:
-👉 **[GOVEMVC Architectural Convention (GOVEMVC.md)](file:///home/user/space/project/web/govemvc/GOVEMVC.md)**
+**[GOVEMVC Architectural Convention (GOVEMVC.md)](file:///home/user/space/project/web/govemvc/GOVEMVC.md)**
