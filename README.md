@@ -21,34 +21,44 @@ This reference implementation demonstrates:
 * **Low-Level WebSocket Upgrader:** Upgrading HTTP connections to real-time TCP sockets purely through standard library features.
 * **Sleek Server-Side Rendering (SSR):** Beautiful glassmorphic UI utilizing the native `html/template` engine and vanilla CSS.
 
-## Getting Started
+## Getting Started (Docker-First Workflow)
 
-Building on top of GOVEMVC is extremely straightforward.
+By default, GOVEMVC is designed to run entirely on top of Docker. This ensures 100% environmental consistency and eliminates any need to install Go, GCC, or SQLite tools locally on your host machine.
 
 ### 1. Configure the Environment
 ```bash
 cp .env.example .env
 ```
 
-### 2. Administer Database Migrations
-Create and seed the database using the lightweight CLI dbtool included under `/database/dbtool`:
+### 2. Administer Database Migrations & Seeds on Docker
+Run database schema migrations and seed default mock records inside an isolated, lightweight Go Docker container:
 ```bash
-go run database/dbtool/main.go migrate
-go run database/dbtool/main.go seed
+# Run incremental SQL migrations
+docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine go run database/dbtool/main.go migrate
+
+# Populate database seeders
+docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine go run database/dbtool/main.go seed
 ```
 
-### 3. Launch the Server
+### 3. Launch the Web Application
+Launch the complete container orchestration (application and persistent volumes) in detached background mode:
 ```bash
-go run cmd/app/main.go
+docker-compose up --build -d
 ```
-Visit `http://localhost:8080` to see the application in action.
+Visit **`http://localhost:8080`** in your web browser to access the live web application!
 
-## Automated Testing & Validation
+---
 
-GOVEMVC prioritizes rigorous reliability. Execute the custom automated runner script to run the isolated unit and integration tests and view interactive HTML code coverage maps:
+## Automated Testing & Validation on Docker
+
+GOVEMVC prioritizes rigorous reliability. Execute the entire testing pipeline (both isolated Unit and Integration test suites) inside a pristine, containerized environment to view interactive HTML code coverage maps:
+
 ```bash
-bash tests/runTests.sh
+docker run --rm -v $(pwd):/app -w /app golang:1.22-alpine sh -c "apk add --no-cache bash gcc musl-dev && bash tests/runTests.sh"
 ```
+After the runner completes, open `tests/results/coverage.html` in any web browser to view the interactive visual map highlighting exact code lines evaluated during test coverage!
+
+---
 
 ## Architectural Conventions
 
