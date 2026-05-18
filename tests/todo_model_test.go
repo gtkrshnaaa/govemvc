@@ -14,7 +14,8 @@ func TestMain(m *testing.M) {
 		log.Fatalf("failed to change directory to project root: %v", err)
 	}
 
-	testDBPath := "test_govemvc.db"
+	// Use official SQLite in-memory database as a mock database
+	testDBPath := ":memory:"
 	models.InitDB(testDBPath)
 
 	code := m.Run()
@@ -22,7 +23,6 @@ func TestMain(m *testing.M) {
 	if models.DB != nil {
 		models.DB.Close()
 	}
-	os.Remove(testDBPath)
 
 	os.Exit(code)
 }
