@@ -30,19 +30,19 @@ Below is the directory hierarchy implemented in this reference Todo application:
 │   ├── /dbtool
 │   │   └── main.go           # CLI database tool (migrate, seed, rollback, reset)
 │   ├── /migrations           # Versioned incremental raw SQL schema alterations
-│   │   ├── 0001_create_todos_table.down.sql   # Rollback database schema script
-│   │   └── 0001_create_todos_table.up.sql     # Create database schema script (Official Schema)
+│   │   ├── 0001-create-todos-table.down.sql   # Rollback database schema script
+│   │   └── 0001-create-todos-table.up.sql     # Create database schema script (Official Schema)
 │   └── /seeders              # Native Go scripts for populating default records
-│       └── todo_seeder.go
+│       └── todoseeder.go
 ├── /tests                    # Structured automated testing pipeline
 │   ├── /unit
-│   │   └── todo_model_test.go         # Model logic & SQL query operations unit tests
+│   │   └── todomodel_test.go         # Model logic & SQL query operations unit tests
 │   ├── /integration
-│   │   └── todo_controller_test.go    # HTTP Handlers, Routing, & SSR rendering integration tests
+│   │   └── todocontroller_test.go    # HTTP Handlers, Routing, & SSR rendering integration tests
 │   ├── /results                       # Center of compiled test artifacts (Git tracked)
 │   │   ├── coverage.html              # Interactive HTML code coverage visual map
 │   │   ├── coverage.out               # Go test coverage profile
-│   │   └── test_report.log            # Verbose test runner terminal execution logs
+│   │   └── test-report.log            # Verbose test runner terminal execution logs
 │   └── run_tests.sh                   # Automator script executing tests and compiling reports
 ├── /middleware               # Global HTTP pipeline interceptors (Logging, Security protection headers)
 │   └── middleware.go
@@ -134,7 +134,7 @@ bash tests/run_tests.sh
 
 ### Read Generated Reports
 After the runner completes, review the gathered artifacts under `tests/results/`:
-* **`tests/results/test_report.log`**: Plaintext terminal output detailing successful assertion results.
+* **`tests/results/test-report.log`**: Plaintext terminal output detailing successful assertion results.
 * **`tests/results/coverage.html`**: Open this file in any web browser to view an interactive visual map highlighting exact code lines evaluated during test coverage!
 
 ---
