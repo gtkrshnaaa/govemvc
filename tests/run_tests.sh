@@ -18,7 +18,7 @@ rm -f "$SCRIPT_DIR/results/test_report.log"
 
 echo "Running unit and integration tests..."
 # Run tests and pipe verbose output to log file
-go test -v "$ROOT_DIR/tests/unit" "$ROOT_DIR/tests/integration" -coverprofile="$SCRIPT_DIR/results/coverage.out" > "$SCRIPT_DIR/results/test_report.log" 2>&1 || true
+go test -v -coverpkg=govemvc/models,govemvc/controllers,govemvc/websocket "$ROOT_DIR/tests/unit" "$ROOT_DIR/tests/integration" -coverprofile="$SCRIPT_DIR/results/coverage.out" > "$SCRIPT_DIR/results/test_report.log" 2>&1 || true
 
 # Validate test outputs
 if grep -q "FAIL" "$SCRIPT_DIR/results/test_report.log"; then
