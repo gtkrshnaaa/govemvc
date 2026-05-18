@@ -36,9 +36,9 @@ Below is the directory hierarchy implemented in this reference Todo application:
 │       └── todoSeeder.go
 ├── /tests                    # Structured automated testing pipeline
 │   ├── /unit
-│   │   └── todoModel_test.go         # Model logic & SQL query operations unit tests
+│   │   └── todoModelTest.go          # Model logic & SQL query operations unit tests
 │   ├── /integration
-│   │   └── todoController_test.go    # HTTP Handlers, Routing, & SSR rendering integration tests
+│   │   └── todoControllerTest.go     # HTTP Handlers, Routing, & SSR rendering integration tests
 │   ├── /results                       # Center of compiled test artifacts (Git tracked)
 │   │   ├── coverage.html              # Interactive HTML code coverage visual map
 │   │   ├── coverage.out               # Go test coverage profile
