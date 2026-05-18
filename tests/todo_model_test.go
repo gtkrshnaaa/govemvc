@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"govemvc/models"
+	"govemvc/websocket"
 )
 
 func TestMain(m *testing.M) {
@@ -13,6 +14,9 @@ func TestMain(m *testing.M) {
 	if err := os.Chdir(".."); err != nil {
 		log.Fatalf("failed to change directory to project root: %v", err)
 	}
+
+	// Start websocket active hub in a background Goroutine to prevent deadlocks on broadcasts
+	go websocket.ActiveHub.Start()
 
 	// Use official SQLite in-memory database as a mock database
 	testDBPath := ":memory:"
