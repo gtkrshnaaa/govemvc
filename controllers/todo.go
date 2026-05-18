@@ -1,0 +1,160 @@
+package controllers
+
+import (
+	"encoding/json"
+	"html/template"
+	"net/http"
+	"strconv"
+
+	"govemvc/models"
+	"govemvc/websocket"
+)
+
+// IndexHandler renders the main dashboard page with all todo items.
+func IndexHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	todos, err := models.GetAllTodos()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tmpl, err := template.ParseFiles("views/layouts/base.html", "views/pages/index.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Todos": todos,
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "base", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// CreateTodoHandler processes a POST request to add a new todo.
+func CreateTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	title := r.FormValue("title")
+	if title == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := models.CreateTodo(title)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "create",
+		"todo": map[string]interface{}{
+			"id":        id,
+			"title":     title,
+			"completed": false,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// ToggleTodoHandler toggles a todo's completed status.
+func ToggleTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var reqBody struct {
+		Completed bool `json:"completed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if err := models.ToggleTodo(id, reqBody.Completed); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "toggle",
+		"todo": map[string]interface{}{
+			"id":        id,
+			"completed": reqBody.Completed,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// DeleteTodoHandler deletes a todo item.
+func DeleteTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	if err := models.DeleteTodo(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updateMsg, _ := json.Marshal(map[string]interface{}{
+		"event": "delete",
+		"todo": map[string]interface{}{
+			"id": id,
+		},
+	})
+	websocket.ActiveHub.Broadcast <- updateMsg
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// WebSocketHandler upgrades and establishes the real-time websocket connection.
+func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Upgrade(w, r)
+	if err != nil {
+		http.Error(w, "failed to upgrade: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	client := &websocket.Client{
+		Conn: conn,
+		Send: make(chan []byte, 256),
+	}
+
+	websocket.ActiveHub.Register <- client
+
+	go client.WriteLoop()
+	go client.ReadLoop()
+}
