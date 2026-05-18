@@ -11,14 +11,6 @@ By building on top of the native Standard Library (`net/http`) and official data
 * **Long-Term Maintainability:** Free from third-party deprecation cycles, security vulnerabilities, or major library updates.
 * **Ultimate Transparency:** Every single line of routing, middleware, database mapping, and real-time communication is completely transparent, readable, and under your absolute control.
 
-## A Legacy of Go & Docker: Built from the Same DNA
-
-The recommendation to use a **Docker-First Workflow** in GOVEMVC is not just a convenience—it is rooted in a profound historical synergy.
-
-When Docker was first developed and released by dotCloud in 2013, it was written entirely in Golang. As one of the earliest and most disruptive cloud technologies in history, Docker served as the ultimate real-world proof of Go's capabilities. It demonstrated to the global software industry that Go could power massive, low-level, high-performance systems infrastructure with extreme reliability.
-
-Because Docker was born out of Go, running your Go-based GOVEMVC applications within Docker containerization represents an architectural match built from the exact same engineering DNA. By containerizing your Go code, you are running Go on a platform built with Go—yielding unparalleled environmental predictability, sterile compilation, and native system-level harmony.
-
 ## Reference Implementation: Real-Time Todo Manager
 
 To make starting with GOVEMVC as simple as possible, this repository contains a fully working, highly optimized reference implementation: a real-time, responsive Todo application.
@@ -32,6 +24,14 @@ This reference implementation demonstrates:
 ## Getting Started (Docker-First Workflow)
 
 By default, GOVEMVC is designed to run entirely on top of Docker. This ensures 100% environmental consistency and eliminates any need to install Go, GCC, or SQLite tools locally on your host machine.
+
+### A Legacy of Go & Docker: Built from the Same DNA
+
+The recommendation to use a **Docker-First Workflow** in GOVEMVC is not just a convenience—it is rooted in a profound historical synergy.
+
+When Docker was first developed and released by dotCloud in 2013, it was written entirely in Golang. As one of the earliest and most disruptive cloud technologies in history, Docker served as the ultimate real-world proof of Go's capabilities. It demonstrated to the global software industry that Go could power massive, low-level, high-performance systems infrastructure with extreme reliability.
+
+Because Docker was born out of Go, running your Go-based GOVEMVC applications within Docker containerization represents an architectural match built from the exact same engineering DNA. By containerizing your Go code, you are running Go on a platform built with Go—yielding unparalleled environmental predictability, sterile compilation, and native system-level harmony.
 
 ### 1. Configure the Environment
 ```bash
