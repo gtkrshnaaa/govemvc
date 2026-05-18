@@ -1,6 +1,6 @@
 # GOVEMVC.md: Standard Architecture Convention for Vendor-Driven & Standard-Library Golang Applications
 
-This document defines **GOVEMVC** (Go Vendor & Standard MVC), an architectural convention and design pattern for building large-scale web applications using native ecosystems. This convention is built on the core principle that Golang's built-in Standard Library is exceptionally powerful for production needs, rendering third-party cosmetic frameworks completely unnecessary.
+This document defines **GOVEMVC** (Go Vendor & Standard MVC), an architectural convention and design pattern for building robust, high-performance web applications using native ecosystems. This convention is built on the core principle that Golang's built-in Standard Library is exceptionally powerful and sufficient for production needs, offering a minimalist, zero-dependency alternative to third-party web frameworks.
 
 ---
 
@@ -74,7 +74,7 @@ Every application adhering to the GOVEMVC convention must implement the semantic
 
 ### B. Data Layer (`database/sql` + Vendor Driver)
 
-* **Absolute Convention:** Data management is strictly prohibited from using community-made ORMs (Object-Relational Mapping). Interfacing with the database must rely entirely on the built-in `database/sql` package.
+* **Absolute Convention:** To demonstrate clean SQL practices and maintain full control over query performance, the application chooses to use the standard `database/sql` package directly instead of relying on external ORMs (Object-Relational Mapping).
 * **Large-Scale Implementation:**
   * Database connectivity must be bridged directly by the driver released by the respective database vendor (e.g., `github.com/mattn/go-sqlite3` for SQLite).
   * All data manipulation operations (CRUD) must be executed using raw SQL queries.
@@ -82,7 +82,7 @@ Every application adhering to the GOVEMVC convention must implement the semantic
 
 ### C. Real-Time Engine (Pure WebSocket via `http.Hijacker`)
 
-* **Absolute Convention:** Using third-party WebSocket libraries is strictly forbidden. The entire process of upgrading HTTP protocols to WebSocket must be executed manually via the `http.Hijacker` interface provided natively by `net/http`.
+* **Absolute Convention:** To demonstrate native protocol engineering, the process of upgrading HTTP connections to WebSockets is executed directly via the standard library's `http.Hijacker` interface, avoiding external WebSocket packages.
 * **Large-Scale Implementation:**
   * The real-time endpoint intercepts standard HTTP requests and hijacks the underlying TCP network connection to make it persistent.
   * The WebSocket handshake calculations (computing the `Sec-WebSocket-Accept` key) are processed independently using built-in functions from the `crypto/sha1` and `encoding/base64` packages.
@@ -90,7 +90,7 @@ Every application adhering to the GOVEMVC convention must implement the semantic
 
 ### D. Frontend Interface (`html/template` & Native CSS)
 
-* **Absolute Convention:** The application UI fully adopts pure Server-Side Rendering (SSR) driven by the Go server via the built-in `html/template` package. Complex external frontend build tools are strictly barred from the stack.
+* **Absolute Convention:** The application UI relies on pure Server-Side Rendering (SSR) via Go's built-in `html/template` package, keeping the deployment architecture simple and lightweight without requiring complex external frontend build tools.
 * **Large-Scale Implementation:**
   * The visual layout and structure of web pages are designed using Pure CSS via traditional static `.css` files.
   * Dynamic UI elements (such as user online status indicators or dynamic color theme updates) have their property values injected directly through dynamic Inline CSS parsed from Go structs.
@@ -105,7 +105,7 @@ Every application adhering to the GOVEMVC convention must implement the semantic
 
 ### F. Database Administration (Migrations & Seeders)
 
-* **Absolute Convention:** Manual DB table creation or hardcoded SQL execution strings inside production models are strictly prohibited. Database schemas and default datasets must be managed via versioned migration files and seeders.
+* **Absolute Convention:** To ensure structural consistency and predictability, database schemas and default datasets are managed via versioned migrations and seeders rather than manual ad-hoc table adjustments in production.
 * **Large-Scale Implementation:**
   * **Incremental SQL Migrations:** All schema changes must be saved as versioned, raw SQL scripts separated into UP (creating/altering tables) and DOWN (reverting changes) statements under `/database/migrations`.
   * **Go Native Seeders:** System mock data or initial application datasets must be populated using native Go seeder scripts nested under `/database/seeders`.
@@ -132,7 +132,7 @@ To maintain clean, uniform, and maintainable code across the entire architecture
 
 ### B. Explicit Error Handling
 
-* **Rule:** Panics are strictly prohibited for flow control or standard execution paths. Errors must be treated as explicit values returned by functions.
+* **Rule:** Panics must not be used for normal flow control or standard execution paths; Go's native error return pattern must be explicitly followed.
 * **Rule:** Every operation capable of returning an error must have its error evaluated immediately via the explicit `if err != nil` check. Errors must be wrapped elegantly with contextual information using `fmt.Errorf` when propagated upward.
 
 ### C. Visibility and Encapsulation
@@ -148,7 +148,7 @@ GOVEMVC places premium importance on defensive coding. When building application
 
 ### A. SQL Injection Prevention
 
-* **Rule:** Concatenating user-supplied string inputs or request parameters directly into raw SQL query strings is strictly prohibited.
+* **Rule:** To prevent SQL injection, user-supplied inputs or request parameters must never be concatenated directly into raw SQL queries.
 * **Rule:** All database actions executed via standard `database/sql` must employ parameterized placeholder arguments (e.g., `?` in SQLite/MySQL, or `$1`, `$2` in PostgreSQL).
 * **Rule:** Direct execution of raw dynamic queries is only permitted for compile-time constants. Any execution involving runtime inputs must use prepared statements or placeholder parameters.
   ```go
@@ -158,7 +158,7 @@ GOVEMVC places premium importance on defensive coding. When building application
 
 ### B. Cross-Site Scripting (XSS) Mitigation
 
-* **Rule:** Rendering untrusted user input directly onto the document context without sanitization or dynamic escaping is strictly forbidden.
+* **Rule:** Untrusted user input must never be rendered directly onto the document context without proper dynamic escaping or sanitization.
 * **Rule:** Output generation must rely entirely on Go's native `html/template` package. The built-in template engine automatically enforces context-aware data escaping (HTML, JavaScript, CSS attributes, and URIs) based on the variable's position inside the template text.
 * **Rule:** Strict browser protection must be enforced by injecting a comprehensive **Content-Security-Policy (CSP)** header globally via middleware (e.g., restricting script execution to `'self'`, disabling `'unsafe-inline'` where possible, or employing cryptographically secure nonces).
 
@@ -175,7 +175,7 @@ GOVEMVC places premium importance on defensive coding. When building application
 * **Rule:** Password hashing must rely exclusively on the official Go vendor cryptography package: **`golang.org/x/crypto/bcrypt`**.
 * **Rule:** The work factor (Cost parameter) for Bcrypt must be explicitly configured to a minimum of **12** (or higher depending on server hardware) to defend against GPU-accelerated offline brute-force attacks.
 * **Rule:** Symmetric data encryption must use **AES-GCM** (Galois/Counter Mode) via `crypto/aes` and `crypto/cipher` standard library packages, utilizing a unique 12-byte initialization vector (IV) generated via `crypto/rand` for every single encryption cycle.
-* **Rule:** Legacy cryptographic hashes like MD5 or SHA-1 are strictly banned for data hashing, integrity checks, or passwords due to collision vulnerabilities (SHA-1 is only accepted during the native WebSocket protocol upgrade handshake, as explicitly mandated by RFC 6455).
+* **Rule:** Legacy cryptographic hashes like MD5 or SHA-1 must not be used for sensitive data hashing, integrity checks, or user passwords due to known collision vulnerabilities (SHA-1 is only accepted during the native WebSocket upgrade handshake as mandated by RFC 6455).
 
 ### E. Secure Session Management
 
