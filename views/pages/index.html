@@ -1,0 +1,29 @@
+{{define "content"}}
+<div class="todo-app-card">
+    <div class="card-header">
+        <h2>Todo List</h2>
+        <p>A reactive task manager powered by native WebSockets</p>
+    </div>
+
+    <form action="/todos" method="POST" class="todo-form" id="todoForm">
+        <input type="text" name="title" id="todoTitle" placeholder="What needs to be done?" required autofocus autocomplete="off">
+        <button type="submit" class="btn-primary">Add Task</button>
+    </form>
+
+    <div class="todo-list-wrapper">
+        <ul class="todo-list" id="todoList">
+            {{range .Todos}}
+            <li class="todo-item {{if .Completed}}completed{{end}}" data-id="{{.ID}}" id="todo-{{.ID}}">
+                <label class="todo-label">
+                    <input type="checkbox" class="todo-checkbox" {{if .Completed}}checked{{end}} onchange="toggleTodo({{.ID}}, this.checked)">
+                    <span class="todo-text">{{.Title}}</span>
+                </label>
+                <button class="btn-delete" onclick="deleteTodo({{.ID}})">Delete</button>
+            </li>
+            {{else}}
+            <li class="empty-state" id="emptyState">No tasks yet. Create one above!</li>
+            {{end}}
+        </ul>
+    </div>
+</div>
+{{end}}
